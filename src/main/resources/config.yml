@@ -1,0 +1,92 @@
+# KeepClaims configuration
+# Every value of "time" below is hours of upkeep for ONE chunk.
+
+# Worlds where claiming is allowed. Empty list = every world.
+enabled-worlds: []
+
+# Default maximum claims per player. Give more with the permission keepclaims.limit.<number>
+max-claims-default: 25
+
+# Item value, in hours, a player must pay to claim a chunk (168 = one week).
+initial-hours: 168
+
+# Nobody can bank more than this many days of upkeep on one chunk.
+max-prepaid-days: 30
+
+# After upkeep runs out the claim keeps protecting for this many days, then it is removed.
+grace-days: 7
+
+# How often (minutes) the plugin checks for expired claims.
+check-interval-minutes: 5
+
+# Players are warned on join when a claim has less than this many days left.
+warn-days: 3
+
+# Cost scaling by how many claims a player owns.
+# multiplier below 1.0 = cheaper, above 1.0 = more expensive.
+# A claim's number is its position among the owner's claims, oldest first.
+cost-tiers:
+  - up-to: 3
+    multiplier: 0.5
+  - up-to: 10
+    multiplier: 1.0
+  - up-to: 1000
+    multiplier: 1.5
+
+# Accepted items and the hours of upkeep each is worth at multiplier 1.0.
+# Only plain items count (renamed or enchanted items are ignored).
+# Keep farmable items (iron, gold, copper) low, and anchor on diamond and netherite.
+materials:
+  COPPER_INGOT: 4
+  COPPER_BLOCK: 36
+  IRON_INGOT: 6
+  IRON_BLOCK: 54
+  GOLD_INGOT: 8
+  GOLD_BLOCK: 72
+  DIAMOND: 72
+  DIAMOND_BLOCK: 648
+  NETHERITE_INGOT: 240
+  NETHERITE_BLOCK: 2160
+
+# Blocks anyone may still use inside other players' claims.
+public-blocks:
+  - CRAFTING_TABLE
+  - ENDER_CHEST
+  - ENCHANTING_TABLE
+  - ANVIL
+  - CHIPPED_ANVIL
+  - DAMAGED_ANVIL
+  - GRINDSTONE
+  - LOOM
+  - CARTOGRAPHY_TABLE
+  - STONECUTTER
+  - SMITHING_TABLE
+
+# Messages use MiniMessage formatting.
+messages:
+  prefix: "<dark_green>[Claims]</dark_green> "
+  no-permission: "<red>You do not have permission."
+  world-disabled: "<red>Claiming is not allowed in this world."
+  already-yours: "<yellow>You already own this chunk."
+  already-claimed: "<red>This chunk already belongs to {owner}."
+  limit-reached: "<red>You reached your claim limit of {limit}."
+  claim-success: "<green>Chunk claimed. It has <white>{time}</white> of upkeep."
+  unclaim-success: "<yellow>Chunk unclaimed. Upkeep is not refunded."
+  no-claim-here: "<red>There is no claim here."
+  not-your-claim: "<red>That is not your claim."
+  pay-success: "<green>Upkeep paid. This claim now has <white>{time}</white> left."
+  max-prepaid: "<yellow>This claim is already at the maximum prepaid time."
+  capped: "<yellow>The maximum prepaid time was reached, so some of the payment was not needed."
+  protected: "<red>This land is claimed by {owner}."
+  trust-added: "<green>{name} can now build in this claim."
+  trust-removed: "<yellow>{name} was removed from this claim."
+  trust-self: "<red>You cannot trust yourself."
+  already-trusted: "<yellow>{name} is already trusted here."
+  unknown-player: "<red>Player not found."
+  claim-expired: "<red>Your claim at chunk {x}, {z} ran out of upkeep and was removed."
+  expiring-warning: "<yellow>{count} of your claims are running low on upkeep. Open /claims to pay."
+  reloaded: "<green>KeepClaims reloaded."
+  bypass-on: "<yellow>Claim bypass enabled."
+  bypass-off: "<yellow>Claim bypass disabled."
+  server-claimed: "<green>Claimed {count} chunk(s) for the server."
+  admin-unclaimed: "<yellow>Claim removed."
