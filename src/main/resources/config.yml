@@ -76,7 +76,10 @@ messages:
   not-your-claim: "<red>That is not your claim."
   pay-success: "<green>Upkeep paid. This claim now has <white>{time}</white> left."
   max-prepaid: "<yellow>This claim is already at the maximum prepaid time."
-  capped: "<yellow>The maximum prepaid time was reached, so some of the payment was not needed."
+  # Shown when a claim has room for less than a single item. Nothing is taken.
+  over-cap: "<red>This claim can only hold {room} more upkeep, which is not enough for even one of those items. Pick a cheaper item, or use automatic."
+  # Shown when a payment works out to zero or less (should not normally happen).
+  nothing-paid: "<red>There is nothing to pay here."
   protected: "<red>This land is claimed by {owner}."
   trust-added: "<green>{name} can now build in this claim."
   trust-removed: "<yellow>{name} was removed from this claim."

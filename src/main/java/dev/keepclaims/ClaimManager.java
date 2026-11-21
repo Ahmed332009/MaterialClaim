@@ -74,6 +74,24 @@ public final class ClaimManager {
         return (long) (plugin.getConfig().getDouble("max-prepaid-days", 30) * DAY_MS);
     }
 
+    /** The maximum prepaid upkeep in hours, i.e. the cap a single claim can hold. */
+    public double maxPrepaidHours() {
+        return maxPrepaidMs() / (double) HOUR_MS;
+    }
+
+    /**
+     * How many hours of upkeep this claim can still take before hitting the prepaid cap.
+     * Never negative.
+     */
+    public double roomHours(Claim c) {
+        if (c == null || c.isServer()) {
+            return 0.0;
+        }
+        long now = System.currentTimeMillis();
+        long base = Math.max(now, c.paidUntil);
+        return Math.max(0.0, (now + maxPrepaidMs() - base) / (double) HOUR_MS);
+    }
+
     public boolean worldEnabled(World w) {
         List<String> list = plugin.getConfig().getStringList("enabled-worlds");
         return list.isEmpty() || list.contains(w.getName());
@@ -273,8 +291,12 @@ public final class ClaimManager {
             return;
         }
         double mult = multiplierFor(mine.size() + 1);
-        double hours = plugin.getConfig().getDouble("initial-hours", 168);
-        PaymentService.Result r = plugin.payments().charge(p, hours, mult, plugin.payments().choiceOf(p));
+        // Never ask for more upkeep than the claim can hold; charge() would clamp it
+        // anyway, and the player would be quoted a price we would not honour.
+        double maxInitialHours = maxPrepaidHours();
+        double hours = Math.min(plugin.getConfig().getDouble("initial-hours", 168), maxInitialHours);
+        PaymentService.Result r = plugin.payments().charge(p, hours, mult,
+                plugin.payments().choiceOf(p), maxInitialHours);
         if (!r.ok()) {
             plugin.sendMini(p, r.error());
             return;
@@ -301,24 +323,30 @@ public final class ClaimManager {
         long now = System.currentTimeMillis();
         long base = Math.max(now, c.paidUntil);
         long cap = now + maxPrepaidMs();
-        if (base >= cap - 60_000L) {
+        double allowedHours = roomHours(c);
+        if (allowedHours <= 0 || base >= cap - 60_000L) {
             plugin.send(p, "max-prepaid");
             return;
         }
-        double allowedHours = (cap - base) / (double) HOUR_MS;
         if (hours <= 0 || hours > allowedHours) {
             hours = allowedHours;
         }
         double mult = multiplierFor(ordinalOf(c));
-        PaymentService.Result r = plugin.payments().charge(p, hours, mult, plugin.payments().choiceOf(p));
+        // Pass the remaining room as a hard ceiling: charge() shrinks the payment to the
+        // largest whole-item amount that fits, so no paid-for value is ever discarded.
+        PaymentService.Result r = plugin.payments().charge(p, hours, mult,
+                plugin.payments().choiceOf(p), allowedHours);
         if (!r.ok()) {
             plugin.sendMini(p, r.error());
             return;
         }
         long newUntil = base + (long) (r.credited() * HOUR_MS);
         if (newUntil > cap) {
+            // charge() is ceiling-aware, so this should be unreachable; clamp defensively
+            // and say so rather than silently dropping value.
             newUntil = cap;
-            plugin.send(p, "capped");
+            plugin.getLogger().warning("Upkeep clamp triggered for " + p.getName()
+                    + " despite a ceiling-aware charge; credited=" + r.credited());
         }
         c.paidUntil = newUntil;
         markDirty();

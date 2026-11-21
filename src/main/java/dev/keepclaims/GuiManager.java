@@ -166,7 +166,10 @@ public final class GuiManager implements Listener {
         if (c == null) {
             List<Claim> mine = cm.byOwner(p.getUniqueId());
             double mult = cm.multiplierFor(mine.size() + 1);
-            double raw = plugin.getConfig().getDouble("initial-hours", 168) * mult;
+            // The charge is clamped to the prepaid cap, so show the clamped price.
+            double maxInitial = cm.maxPrepaidHours();
+            double initial = Math.min(plugin.getConfig().getDouble("initial-hours", 168), maxInitial);
+            double raw = initial * mult;
             Material choice = pay.choiceOf(p);
             List<String> lore = new ArrayList<>();
             lore.add("<gray>Claims used: <white>" + mine.size() + "/" + cm.limitFor(p));
@@ -210,19 +213,30 @@ public final class GuiManager implements Listener {
                 "<gray>Status: " + cm.statusLine(c),
                 "<gray>Paying with: <white>" + (choice == null ? "cheapest items first" : Util.pretty(choice))), null);
 
+        // How much upkeep this claim can still take before the prepaid cap.
+        double room = cm.roomHours(c);
+        infoAddRoom(inv, room);
+
         double[] hours = {24, 72, 168, 336, 0};
         String[] names = {"+1 day", "+3 days", "+7 days", "+14 days", "Fill to maximum"};
         for (int i = 0; i < hours.length; i++) {
             List<String> lore = new ArrayList<>();
-            if (hours[i] > 0 && choice != null) {
-                int n = (int) Math.ceil(hours[i] * mult / pay.valueOf(choice) - 1e-9);
+            // Never advertise more than the claim can actually hold: the charge is
+            // shrunk to fit, so showing the unclamped cost would overstate the price.
+            double want = hours[i] > 0 ? Math.min(hours[i], room) : room;
+            if (hours[i] > 0 && want + 1e-9 < hours[i]) {
+                lore.add("<red>Only " + Util.duration((long) (want * 3_600_000L))
+                        + " of room left on this claim.");
+            }
+            if (want <= 1e-9) {
+                lore.add("<red>No room left for more upkeep.");
+            } else if (choice != null) {
+                int n = (int) Math.ceil(want * mult / pay.valueOf(choice) - 1e-9);
                 lore.add("<gray>Cost: <white>" + Math.max(1, n) + "x " + Util.pretty(choice));
                 lore.add("<gray>You have: <white>" + pay.count(p, choice));
-            } else if (hours[i] > 0) {
-                lore.add("<gray>Cost, pick one kind of item:");
-                lore.addAll(pay.costLines(hours[i] * mult));
             } else {
-                lore.add("<gray>Pays up to the maximum prepaid time.");
+                lore.add("<gray>Cost, pick one kind of item:");
+                lore.addAll(pay.costLines(want * mult));
             }
             lore.add("<yellow>Click to pay");
             String action = hours[i] > 0 ? "pay:" + (int) hours[i] : "pay:max";
@@ -247,6 +261,20 @@ public final class GuiManager implements Listener {
         set(inv, h, 35, item(Material.ARROW, "<yellow>Back"), "main");
         fillEmpty(inv);
         p.openInventory(inv);
+    }
+
+    /** Adds the remaining-room line to the item already sitting in the info slot. */
+    private void infoAddRoom(Inventory inv, double roomHours) {
+        ItemStack it = inv.getItem(4);
+        if (it == null || it.getItemMeta() == null) {
+            return;
+        }
+        ItemMeta meta = it.getItemMeta();
+        List<Component> lore = meta.lore() == null ? new ArrayList<>() : new ArrayList<>(meta.lore());
+        lore.add(mm("<gray>Room left: <white>" + Util.duration((long) (roomHours * 3_600_000L))));
+        meta.lore(lore);
+        it.setItemMeta(meta);
+        inv.setItem(4, it);
     }
 
     private String trim(double v) {
