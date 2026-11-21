@@ -19,6 +19,21 @@
 *.tar.gz
 *.rar
 
+# ...but the Gradle wrapper jar MUST be committed, or CI fails with exit 127.
+!gradle/wrapper/gradle-wrapper.jar
+
+# Gradle build output and caches
+.gradle/
+build/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
