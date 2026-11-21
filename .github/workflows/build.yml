@@ -1,17 +1,42 @@
 name: Build
+
 on: [push, pull_request]
+
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
+          cache: gradle
+
       - name: Build
-        run: ./gradlew jar
-      - uses: actions/upload-artifact@v4
+        run: ./gradlew jar --no-daemon --stacktrace
+
+      # Guard against the "build succeeds but the jar is empty" failure mode:
+      # plugin.yml and the compiled classes must actually be inside the jar.
+      - name: Verify jar contents
+        run: |
+          JAR=$(ls build/libs/*.jar | head -n 1)
+          echo "Checking $JAR"
+          unzip -l "$JAR" | grep -q 'plugin.yml' \
+            || { echo '::error::plugin.yml missing from jar'; exit 1; }
+          unzip -l "$JAR" | grep -q 'dev/keepclaims/KeepClaims.class' \
+            || { echo '::error::compiled classes missing from jar'; exit 1; }
+          if unzip -p "$JAR" plugin.yml | grep -q '\${version}'; then
+            echo '::error::version placeholder in plugin.yml was not expanded'; exit 1
+          fi
+          echo "Jar contents OK"
+
+      - uses: actions/upload-artifact@v6
         with:
           name: KeepClaims
           path: build/libs/*.jar
+          if-no-files-found: error

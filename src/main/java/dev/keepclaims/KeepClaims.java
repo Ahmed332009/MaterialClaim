@@ -91,6 +91,16 @@ public final class KeepClaims extends JavaPlugin {
         to.sendMessage(MM.deserialize(prefix() + apply(raw, kv)));
     }
 
+    /**
+     * The configured MiniMessage string for a key, with placeholders filled in and the
+     * prefix prepended. For code that needs to return a message instead of sending it.
+     * kv is pairs of placeholder name and value.
+     */
+    public String message(String key, String... kv) {
+        String raw = getConfig().getString("messages." + key, key);
+        return prefix() + apply(raw, kv);
+    }
+
     /** Sends a ready-made MiniMessage string with the prefix. */
     public void sendMini(CommandSender to, String mini) {
         to.sendMessage(MM.deserialize(prefix() + mini));
