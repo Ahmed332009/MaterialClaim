@@ -1,0 +1,15 @@
+name: KeepClaims
+version: 1.0.0
+main: dev.keepclaims.KeepClaims
+api-version: '1.21'
+authors: [Ahmed332009]
+commands:
+  claims:
+    aliases: [claim, kc]
+    description: Land claims menu
+    usage: /claims
+permissions:
+  keepclaims.use:
+    default: true
+  keepclaims.admin:
+    default: op
