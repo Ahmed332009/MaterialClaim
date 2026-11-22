@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -31,17 +30,25 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class GuiManager implements Listener {
     private static final MiniMessage MM = MiniMessage.miniMessage();
 
-    enum Type { MAIN, PAY, TRUST_ADD, TRUST_LIST, MY_CLAIMS, UNCLAIM, SETTINGS, PVP_SCOPE, MEMBER, CONFIRM_BUY }
+    enum Type { MAIN, PAY, TRUST_ADD, TRUST_LIST, MY_CLAIMS, UNCLAIM, SETTINGS, PVP_SCOPE, MEMBER,
+        CONFIRM_BUY, SELECTION, CONFIRM_REMOVE }
 
     static final class MenuHolder implements InventoryHolder {
         final Type type;
-        final ChunkKey key;
+        final Claim claim;
+        /** Selection menus work on land that is not a territory yet. */
+        final Area selection;
         final Map<Integer, String> actions = new HashMap<>();
         Inventory inv;
 
-        MenuHolder(Type type, ChunkKey key) {
+        MenuHolder(Type type, Claim claim) {
+            this(type, claim, null);
+        }
+
+        MenuHolder(Type type, Claim claim, Area selection) {
             this.type = type;
-            this.key = key;
+            this.claim = claim;
+            this.selection = selection;
         }
 
         @Override
@@ -55,7 +62,7 @@ public final class GuiManager implements Listener {
     /** Players waiting to type a territory name or message in chat. */
     private static final Map<UUID, PendingText> PENDING = new ConcurrentHashMap<>();
 
-    record PendingText(ChunkKey key, SettingsService.TextInput field) {
+    record PendingText(Claim claim, SettingsService.TextInput field) {
     }
 
     public GuiManager(KeepClaims plugin) {
@@ -77,12 +84,7 @@ public final class GuiManager implements Listener {
             plugin.send(p, "text-cancelled");
             return true;
         }
-        Claim c = plugin.claims().get(pending.key());
-        if (c == null) {
-            plugin.send(p, "no-claim-here");
-            return true;
-        }
-        plugin.claims().setText(p, c, pending.field(), message);
+        plugin.claims().setText(p, pending.claim(), pending.field(), message);
         return true;
     }
 
@@ -97,7 +99,7 @@ public final class GuiManager implements Listener {
     }
 
     private String esc(String s) {
-        return MM.escapeTags(s);
+        return MM.escapeTags(s == null ? "" : s);
     }
 
     private ItemStack item(Material m, String name, List<String> lore) {
@@ -170,8 +172,16 @@ public final class GuiManager implements Listener {
         return op.getName() != null ? op.getName() : id.toString().substring(0, 8);
     }
 
-    private boolean isOwner(Player p, Claim c) {
-        return c != null && p.getUniqueId().equals(c.owner);
+    private UUID parseId(String s) {
+        try {
+            return UUID.fromString(s);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private void later(Runnable r) {
+        Bukkit.getScheduler().runTask(plugin, r);
     }
 
     /** Owner, manager or admin of a player territory: may pay upkeep. */
@@ -184,83 +194,192 @@ public final class GuiManager implements Listener {
         return c != null && !c.isServer() && plugin.settings().isOwnerOrAdmin(p, c);
     }
 
-    private UUID parseId(String s) {
-        try {
-            return UUID.fromString(s);
-        } catch (IllegalArgumentException ex) {
-            return null;
+    private String trim(double v) {
+        return v == Math.rint(v) ? String.valueOf((long) v) : String.format("%.2f", v);
+    }
+
+    // ------------------------------------------------------------ selection menu
+
+    /**
+     * The menu that opens automatically when the second shovel corner is clicked. It shows
+     * the adjusted price for exactly the blocks that were selected, and what the territory
+     * will become, before anything is charged.
+     */
+    public void openSelection(Player p, Area area) {
+        ClaimManager cm = plugin.claims();
+        ClaimManager.Quote q = cm.quote(p, area);
+        MenuHolder h = new MenuHolder(Type.SELECTION, null, area);
+        Inventory inv = create(h, 27, "<dark_green><bold>Claim this land?");
+
+        Material choose = plugin.payments().choiceOf(p);
+        List<String> info = new ArrayList<>();
+        info.add("<gray>Selection: <white>" + area.width() + " x " + area.depth()
+                + " <gray>blocks");
+        info.add("<gray>Coordinates: <white>" + area.describe());
+        info.add("<gray>Total blocks: <white>" + q.blocks());
+        if (q.newBlocks() != q.blocks()) {
+            info.add("<gray>Already yours: <white>" + (q.blocks() - q.newBlocks())
+                    + " <gray>blocks (free)");
+            info.add("<gray>New blocks: </gray><white>" + q.newBlocks());
         }
+        info.add("<gray>Territory after: <white>" + q.blocksAfter() + " blocks");
+        info.add("<gray>Upkeep rate: <white>"
+                + trim(cm.rateAfter(q)) + " hours/h");
+        set(inv, h, 4, item(Material.GRASS_BLOCK, "<green>Your selection", info), null);
+
+        List<String> price = new ArrayList<>();
+        price.add("<gray>Price: <white>" + trim(q.hours()) + " hours <gray>of upkeep");
+        if (q.newBlocks() == 0) {
+            price.add("<red>You already own all of this land.");
+        } else {
+            price.add("<gray>Paying with: <white>"
+                    + (choose == null ? "cheapest items first" : Util.pretty(choose)));
+            price.add("<gray>Pick one kind of item:");
+            price.addAll(plugin.payments().costLines(q.hours()));
+            price.add("<gray>Mode: <white>" + plugin.pricing().describeMode());
+        }
+        Material priceIcon = q.ok() ? Material.GOLD_INGOT : Material.BARRIER;
+        set(inv, h, 11, item(priceIcon, q.ok() ? "<gold>Cost" : "<red>Cannot claim here", price), null);
+
+        if (q.ok() && q.newBlocks() > 0) {
+            set(inv, h, 15, item(Material.LIME_CONCRETE, "<green>Confirm claim",
+                    "<gray>Charges the items listed and claims",
+                    "<gray>the whole vertical column here.",
+                    "<gray>No refunds, ever."), "sel_confirm");
+        }
+        set(inv, h, 22, item(Material.RED_CONCRETE, "<red>Cancel",
+                "<gray>Nothing is charged."), "close");
+        fillEmpty(inv);
+        // Remember the quote so confirming cannot re-price against a changed inventory.
+        QUOTES.put(p.getUniqueId(), q);
+        p.openInventory(inv);
     }
 
-    private Claim claimAt(Player p, ChunkKey key) {
-        return plugin.claims().get(key);
-    }
 
-    private void later(Runnable r) {
-        Bukkit.getScheduler().runTask(plugin, r);
+    // ------------------------------------------------------------- remove menu
+
+    /**
+     * Confirmation for shrinking a territory with the shovel. Removing land is free and
+     * never refunds anything; the upkeep clock is re-priced at the smaller size, so the
+     * remaining time can only stay the same or grow slightly, never shrink.
+     */
+    public void openRemove(Player p, Claim c, Area area) {
+        ClaimManager cm = plugin.claims();
+        if (!mayAdmin(p, c)) {
+            plugin.send(p, "not-your-claim");
+            return;
+        }
+        // Only the part of the rectangle that is actually this territory can go.
+        List<Area> hit = new ArrayList<>();
+        for (Area a : c.areas) {
+            if (a.intersects(area)) {
+                hit.add(a);
+            }
+        }
+        if (hit.isEmpty()) {
+            plugin.send(p, "no-claim-here");
+            return;
+        }
+        MenuHolder h = new MenuHolder(Type.CONFIRM_REMOVE, c, area);
+        Inventory inv = create(h, 27, "<dark_red><bold>Remove this land?");
+        List<String> info = new ArrayList<>();
+        info.add("<gray>Box: <white>" + area.width() + " x " + area.depth()
+                + " (" + area.blocks() + " blocks)");
+        info.add("<gray>Coordinates: <white>" + area.describe());
+        info.add("<gray>Territory now: <white>" + cm.sizeLine(c));
+        info.add("<gray>Upkeep left: <white>" + Util.duration(cm.remainingMs(c)));
+        info.add("");
+        info.add("<gray>Removing land is <white>free<gray>.");
+        info.add("<red>No refund. Hours already paid are not returned.");
+        set(inv, h, 4, item(Material.GRASS_BLOCK, "<red>Removing land", info), null);
+        set(inv, h, 11, item(Material.RED_CONCRETE, "<red>Yes, remove this land",
+                "<gray>Those blocks become unclaimed.",
+                "<gray>Nothing is refunded."), "remove_confirm");
+        set(inv, h, 15, item(Material.LIME_CONCRETE, "<green>No, keep it",
+                "<gray>Nothing changes."), "close");
+        fillEmpty(inv);
+        p.openInventory(inv);
     }
+    private static final Map<UUID, ClaimManager.Quote> QUOTES = new ConcurrentHashMap<>();
 
     // ---------------------------------------------------------------- main menu
 
     public void openMain(Player p) {
         ClaimManager cm = plugin.claims();
-        PaymentService pay = plugin.payments();
-        ChunkKey key = cm.keyOf(p.getLocation());
-        Claim c = cm.get(key);
-        MenuHolder h = new MenuHolder(Type.MAIN, key);
+        Claim c = cm.at(p.getLocation());
+        if (c == null) {
+            openNoClaim(p);
+            return;
+        }
+        openClaim(p, c);
+    }
+
+    /** Shown when the player stands on unclaimed land: explains the shovel. */
+    public void openNoClaim(Player p) {
+        ClaimManager cm = plugin.claims();
+        MenuHolder h = new MenuHolder(Type.MAIN, null);
         Inventory inv = create(h, 27, "<dark_green><bold>Land Claims");
+        List<String> info = new ArrayList<>();
+        info.add("<green>Unclaimed land");
+        info.add("");
+        info.add("<gray>Claim land with a <white>Golden Shovel<gray>:");
+        info.add("<gray> - <white>Left click<gray> a block for the first corner");
+        info.add("<gray> - <white>Right click<gray> a block for the second corner");
+        info.add("<gray>The price menu opens automatically.");
+        info.add("");
+        info.add("<gray>Right click with a <white>Stick<gray> to inspect any land.");
+        set(inv, h, 4, item(Material.GRASS_BLOCK, "<gold>How to claim", info), null);
+        set(inv, h, 11, item(Material.GOLDEN_SHOVEL, "<yellow>Get a golden shovel",
+                "<gray>Click to put one in your inventory."), "give_shovel");
+        set(inv, h, 13, item(Material.STICK, "<yellow>Get a stick",
+                "<gray>Click to put one in your inventory."), "give_stick");
+        long used = cm.ownedBlocks(p.getUniqueId());
+        set(inv, h, 15, item(Material.BOOK, "<gold>My claims",
+                "<gray>Blocks used: <white>" + used + "/" + cm.limitFor(p),
+                "<yellow>Click to open"), "my_claims");
+        set(inv, h, 22, item(Material.BARRIER, "<red>Close"), "close");
+        fillEmpty(inv);
+        p.openInventory(inv);
+    }
+
+    /** The management menu for one territory. */
+    public void openClaim(Player p, Claim c) {
+        ClaimManager cm = plugin.claims();
+        SettingsService svc = plugin.settings();
+        MenuHolder h = new MenuHolder(Type.MAIN, c);
+        Inventory inv = create(h, 27, "<dark_green><bold>Territory Settings");
 
         List<String> info = new ArrayList<>();
-        info.add("<gray>World: <white>" + esc(cm.worldName(key)));
-        if (c == null) {
-            info.add("<green>Unclaimed");
-        } else {
-            info.add("<gray>Owner: <white>" + esc(c.isServer() ? "Server" : c.ownerName));
-            info.add("<gray>Status: " + cm.statusLine(c));
-            info.add("<gray>Territory: <white>" + c.size() + " chunk(s)");
-            info.add("<gray>Trusted players: <white>" + c.trusted.size());
-        }
-        set(inv, h, 4, item(Material.PAPER, "<gold>Chunk " + key.x() + ", " + key.z(), info), null);
+        info.add("<gray>Owner: <white>" + esc(c.isServer() ? "Server" : c.ownerName));
+        info.add("<gray>Name: <white>" + esc(c.displayName()));
+        info.add("<gray>Size: <white>" + cm.sizeLine(c));
+        info.add("<gray>World: <white>" + esc(cm.worldName(c)));
+        info.add("<gray>Status: " + cm.statusLine(c));
+        info.add("<gray>Trusted players: <white>" + c.trusted.size());
+        set(inv, h, 4, item(Material.PAPER, "<gold>" + esc(c.displayName()), info), null);
 
-        if (c == null) {
-            Set<Claim> adjacent = cm.adjacentOwned(p.getUniqueId(), key);
-            int sizeAfter = 1;
-            for (Claim a : adjacent) {
-                sizeAfter += a.size();
-            }
-            double raw = plugin.getConfig().getDouble("initial-hours", 96);
-            Material choice = pay.choiceOf(p);
-            List<String> lore = new ArrayList<>();
-            lore.add("<gray>Territory size after: <white>" + sizeAfter + " chunk(s)");
-            lore.add("<gray>Chunks used: <white>" + cm.ownedChunks(p.getUniqueId()) + "/" + cm.limitFor(p));
-            lore.add("<gray>Paying with: <white>" + (choice == null ? "cheapest items first" : Util.pretty(choice)));
-            lore.add("<gray>Price, pick one kind of item:");
-            lore.addAll(pay.costLines(raw));
-            lore.add("<yellow>Click to claim");
-            String title = adjacent.isEmpty() ? "<green>Claim this chunk" : "<green>Add this chunk to your territory";
-            set(inv, h, 10, item(Material.GRASS_BLOCK, title, lore), "claim");
-        } else {
-            SettingsService svc = plugin.settings();
-            if (mayPay(p, c)) {
-                set(inv, h, 10, item(Material.DIAMOND, "<aqua>Pay upkeep",
-                        "<gray>Add time to this territory.", "<yellow>Click to open"), "pay_menu");
-            }
-            if (mayAdmin(p, c)) {
-                set(inv, h, 11, item(Material.PLAYER_HEAD, "<green>Trusted players",
-                        "<gray>Choose who can build or manage here.", "<yellow>Click to open"), "trust_menu");
-                set(inv, h, 13, item(Material.TNT, "<red>Unclaim",
-                        "<gray>Gives up this chunk.", "<gray>Upkeep is not refunded."), "unclaim_menu");
-            }
-            if (svc.canManage(p, c)) {
-                set(inv, h, 15, item(Material.COMPARATOR, "<gold>Settings",
-                        "<gray>Protections and visitor rules.",
-                        "<gray>Paid protections: <white>" + c.settings.activePaidCount(),
-                        "<yellow>Click to open"), "settings");
-            }
+        if (mayPay(p, c)) {
+            set(inv, h, 10, item(Material.DIAMOND, "<aqua>Pay upkeep",
+                    "<gray>Rate: <white>" + trim(cm.rate(c)) + " hours/h",
+                    "<gray>Add time to this territory.", "<yellow>Click to open"), "pay_menu");
         }
-        set(inv, h, 12, item(Material.SPYGLASS, "<yellow>Show chunk borders",
-                "<gray>Particles show this chunk for a few seconds."), "borders");
-        set(inv, h, 14, item(Material.BOOK, "<gold>My claims", "<gray>See all your claims and their time."), "my_claims");
+        if (mayAdmin(p, c)) {
+            set(inv, h, 11, item(Material.PLAYER_HEAD, "<green>Trusted players",
+                    "<gray>Choose who can build or manage here.", "<yellow>Click to open"), "trust_menu");
+            set(inv, h, 13, item(Material.TNT, "<red>Unclaim territory",
+                    "<gray>Gives up all of this territory's land.",
+                    "<gray>Upkeep is not refunded."), "unclaim_menu");
+        }
+        if (svc.canManage(p, c)) {
+            set(inv, h, 15, item(Material.COMPARATOR, "<gold>Settings",
+                    "<gray>Protections and visitor rules.",
+                    "<gray>Paid protections: <white>" + c.settings.activePaidCount(),
+                    "<yellow>Click to open"), "settings");
+        }
+        set(inv, h, 12, item(Material.SPYGLASS, "<yellow>Show borders",
+                "<gray>Particles outline this territory."), "borders");
+        set(inv, h, 14, item(Material.BOOK, "<gold>My claims",
+                "<gray>See all your claims and their time."), "my_claims");
         set(inv, h, 22, item(Material.BARRIER, "<red>Close"), "close");
         fillEmpty(inv);
         p.openInventory(inv);
@@ -268,23 +387,24 @@ public final class GuiManager implements Listener {
 
     // ----------------------------------------------------------------- pay menu
 
-    public void openPay(Player p, ChunkKey key) {
+    public void openPay(Player p, Claim c) {
         ClaimManager cm = plugin.claims();
         PaymentService pay = plugin.payments();
-        Claim c = cm.get(key);
         if (!mayPay(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
         double mult = cm.rate(c);
         Material choice = pay.choiceOf(p);
-        MenuHolder h = new MenuHolder(Type.PAY, key);
+        MenuHolder h = new MenuHolder(Type.PAY, c);
         Inventory inv = create(h, 36, "<dark_green><bold>Pay upkeep");
 
-        set(inv, h, 4, item(Material.CLOCK, "<gold>Territory of " + c.size() + " chunk(s)",
+        set(inv, h, 4, item(Material.CLOCK, "<gold>" + cm.sizeLine(c),
                 "<gray>Status: " + cm.statusLine(c),
+                "<gray>Rate: <white>" + trim(mult) + " hours/h",
                 "<gray>Payment covers the whole territory.",
-                "<gray>Paying with: <white>" + (choice == null ? "cheapest items first" : Util.pretty(choice))), null);
+                "<gray>Paying with: <white>"
+                        + (choice == null ? "cheapest items first" : Util.pretty(choice))), null);
 
         double[] hours = {24, 72, 168, 336, 0};
         String[] names = {"+1 day", "+3 days", "+7 days", "+14 days", "Fill to maximum"};
@@ -307,7 +427,8 @@ public final class GuiManager implements Listener {
 
         int slot = 18;
         ItemStack auto = item(Material.HOPPER, "<white>Automatic",
-                "<gray>Uses your cheapest accepted items first.", choice == null ? "<green>Selected" : "<yellow>Click to select");
+                "<gray>Uses your cheapest accepted items first.",
+                choice == null ? "<green>Selected" : "<yellow>Click to select");
         set(inv, h, slot++, choice == null ? glow(auto) : auto, "choose:AUTO");
         for (Map.Entry<Material, Double> e : pay.values().entrySet()) {
             if (slot > 31) {
@@ -325,20 +446,14 @@ public final class GuiManager implements Listener {
         p.openInventory(inv);
     }
 
-    private String trim(double v) {
-        return v == Math.rint(v) ? String.valueOf((long) v) : String.format("%.1f", v);
-    }
-
     // ------------------------------------------------------------- trust menus
 
-    public void openTrustAdd(Player p, ChunkKey key) {
-        ClaimManager cm = plugin.claims();
-        Claim c = cm.get(key);
+    public void openTrustAdd(Player p, Claim c) {
         if (!mayAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
-        MenuHolder h = new MenuHolder(Type.TRUST_ADD, key);
+        MenuHolder h = new MenuHolder(Type.TRUST_ADD, c);
         Inventory inv = create(h, 54, "<dark_green><bold>Trust a player");
         int slot = 0;
         for (Player o : Bukkit.getOnlinePlayers()) {
@@ -349,8 +464,8 @@ public final class GuiManager implements Listener {
                 break;
             }
             set(inv, h, slot++, head(o, "<green>" + esc(o.getName()),
-                    "<gray>Click to trust as Builder",
-                    "<gray>They can build and break blocks."),
+                            "<gray>Click to trust as Builder",
+                            "<gray>They can build and break blocks."),
                     "trust:" + o.getUniqueId());
         }
         set(inv, h, 45, item(Material.ARROW, "<yellow>Back"), "main");
@@ -360,14 +475,12 @@ public final class GuiManager implements Listener {
         p.openInventory(inv);
     }
 
-    public void openTrustList(Player p, ChunkKey key) {
-        ClaimManager cm = plugin.claims();
-        Claim c = cm.get(key);
+    public void openTrustList(Player p, Claim c) {
         if (!mayAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
-        MenuHolder h = new MenuHolder(Type.TRUST_LIST, key);
+        MenuHolder h = new MenuHolder(Type.TRUST_LIST, c);
         Inventory inv = create(h, 54, "<dark_green><bold>Trusted players");
         int slot = 0;
         for (UUID id : c.trusted.ids()) {
@@ -388,71 +501,14 @@ public final class GuiManager implements Listener {
         p.openInventory(inv);
     }
 
-    /**
-     * Confirmation screen shown before an unpurchased protection is bought. It spells out
-     * the three things a player can regret: the 24 hour cost, the permanent upkeep
-     * increase, and that nothing is ever refunded. The caller has already checked the
-     * territory has enough upkeep.
-     */
-    public void openConfirmBuy(Player p, ChunkKey key, SettingsService.Flag f) {
-        Claim c = plugin.claims().get(key);
-        if (c == null) {
-            plugin.send(p, "no-claim-here");
-            return;
-        }
-        SettingsService svc = plugin.settings();
-        if (!svc.canManage(p, c)) {
-            plugin.send(p, "not-your-claim");
-            return;
-        }
-        // Nothing to confirm if it is already owned; just show the settings menu.
-        if (c.settings.isPurchased(f.id)) {
-            later(() -> openSettings(p, key));
-            return;
-        }
-        long left = plugin.claims().remainingMs(c);
-        MenuHolder h = new MenuHolder(Type.CONFIRM_BUY, key);
-        Inventory inv = create(h, 27, "<dark_green><bold>Buy " + esc(f.title) + "?");
-
-        int owned = c.settings.purchasedPaidCount();
-        double nowFactor = 1.0 + svc.upkeepMultiplier() * owned;
-        double nextFactor = 1.0 + svc.upkeepMultiplier() * (owned + 1);
-        int pct = (int) Math.round(svc.upkeepMultiplier() * 100);
-        List<String> cost = new ArrayList<>();
-        cost.add("<gray>" + f.description);
-        cost.add("");
-        cost.add("<gray>Cost: <white>24 hours <gray>of this territory's upkeep");
-        cost.add("<gray>Upkeep left now: <white>" + Util.duration(left));
-        cost.add("<gray>After buying: <white>"
-                + Util.duration(Math.max(0L, left - ClaimManager.PROTECTION_COST_MS)));
-        cost.add("");
-        cost.add("<gray>Permanent: upkeep cost <white>+" + pct + "%<gray> ("
-                + trim(nowFactor) + "x -> <white>" + trim(nextFactor) + "x<gray>)");
-        cost.add("<gray>Costs stay higher even while this is switched OFF.");
-        cost.add("");
-        cost.add("<red>No refunds. 24 hours is gone for good, and");
-        cost.add("<red>toggling it off later gives nothing back.");
-        set(inv, h, 4, item(Material.REDSTONE_BLOCK, "<red>" + f.title, cost), null);
-
-        set(inv, h, 11, item(Material.LIME_CONCRETE, "<green>Yes, buy for 24 hours",
-                "<gray>Deducts 24 hours and switches it ON.",
-                "<gray>You keep it and can toggle it free from now on."),
-                "buy_confirm:" + f.id);
-        set(inv, h, 15, item(Material.RED_CONCRETE, "<red>No, go back",
-                "<gray>Nothing is charged."), "settings");
-        fillEmpty(inv);
-        p.openInventory(inv);
-    }
-
     /** Sub-menu for one trusted player: pick Builder or Manager, or remove them. */
-    public void openMember(Player p, ChunkKey key, UUID id) {
-        Claim c = plugin.claims().get(key);
+    public void openMember(Player p, Claim c, UUID id) {
         if (!mayAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
         TrustList.Level current = c.trusted.levelOf(id);
-        MenuHolder h = new MenuHolder(Type.MEMBER, key);
+        MenuHolder h = new MenuHolder(Type.MEMBER, c);
         Inventory inv = create(h, 27, "<dark_green><bold>" + esc(nameOf(id)));
         set(inv, h, 4, head(Bukkit.getOfflinePlayer(id), "<green>" + esc(nameOf(id)),
                 "<gray>Level: <white>" + current.id), null);
@@ -476,16 +532,17 @@ public final class GuiManager implements Listener {
 
     // ------------------------------------------------------- unclaim, my claims
 
-    public void openUnclaim(Player p, ChunkKey key) {
-        Claim c = plugin.claims().get(key);
+    public void openUnclaim(Player p, Claim c) {
+        ClaimManager cm = plugin.claims();
         if (!mayAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
-        MenuHolder h = new MenuHolder(Type.UNCLAIM, key);
-        Inventory inv = create(h, 27, "<dark_red><bold>Unclaim this chunk?");
-        set(inv, h, 11, item(Material.RED_CONCRETE, "<red>Yes, unclaim",
-                "<gray>Chunk " + key.x() + ", " + key.z(), "<gray>Blocked if it would split your territory.",
+        MenuHolder h = new MenuHolder(Type.UNCLAIM, c);
+        Inventory inv = create(h, 27, "<dark_red><bold>Unclaim territory?");
+        set(inv, h, 11, item(Material.RED_CONCRETE, "<red>Yes, unclaim everything",
+                "<gray>Size: <white>" + cm.sizeLine(c),
+                "<gray>All of this territory's land is released.",
                 "<gray>No refund is given."), "unclaim_confirm");
         set(inv, h, 15, item(Material.LIME_CONCRETE, "<green>No, keep it"), "main");
         fillEmpty(inv);
@@ -503,45 +560,52 @@ public final class GuiManager implements Listener {
             if (slot >= 45) {
                 break;
             }
-            ChunkKey first = c.chunks.iterator().next();
             long left = cm.remainingMs(c);
-            Material icon = left > warn ? Material.LIME_CONCRETE : left > 0 ? Material.YELLOW_CONCRETE : Material.RED_CONCRETE;
-            set(inv, h, slot++, item(icon, "<gold>Territory of " + c.size() + " chunk(s)",
-                    "<gray>World: <white>" + esc(cm.worldName(first)),
-                    "<gray>Includes chunk: <white>" + first.x() + ", " + first.z()
-                            + " <gray>(blocks " + (first.x() * 16) + ", " + (first.z() * 16) + ")",
-                    "<gray>Status: " + cm.statusLine(c),
-                    "<gray>Trusted: <white>" + c.trusted.size()), null);
+            Material icon = left > warn ? Material.LIME_CONCRETE
+                    : left > 0 ? Material.YELLOW_CONCRETE : Material.RED_CONCRETE;
+            set(inv, h, slot++, item(icon, "<gold>" + esc(c.displayName()),
+                            "<gray>Size: <white>" + cm.sizeLine(c),
+                            "<gray>World: <white>" + esc(cm.worldName(c)),
+                            "<gray>At: <white>" + c.shortId(),
+                            "<gray>Status: " + cm.statusLine(c),
+                            "<gray>Trusted: <white>" + c.trusted.size(),
+                            "<yellow>Click to manage"),
+                    "openclaim:" + list.indexOf(c));
+        }
+        if (list.isEmpty()) {
+            set(inv, h, 22, item(Material.GOLDEN_SHOVEL, "<yellow>No claims yet",
+                    "<gray>Use a golden shovel: left click one corner,",
+                    "<gray>right click the other."), "close");
         }
         set(inv, h, 49, item(Material.ARROW, "<yellow>Back"), "main");
         fillEmpty(inv);
+        CLAIM_LISTS.put(p.getUniqueId(), list);
         p.openInventory(inv);
     }
 
+    private static final Map<UUID, List<Claim>> CLAIM_LISTS = new ConcurrentHashMap<>();
+
     // ---------------------------------------------------------------- settings
 
-    /** The Settings button on the main territory menu. */
-    public void openSettings(Player p, ChunkKey key) {
+    public void openSettings(Player p, Claim c) {
         ClaimManager cm = plugin.claims();
-        SettingsService svc = plugin.settings();
-        Claim c = cm.get(key);
         if (c == null) {
             plugin.send(p, "no-claim-here");
             return;
         }
-        if (!svc.canManage(p, c)) {
+        if (!plugin.settings().canManage(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
-        MenuHolder h = new MenuHolder(Type.SETTINGS, key);
+        MenuHolder h = new MenuHolder(Type.SETTINGS, c);
         Inventory inv = create(h, 54, "<dark_green><bold>Territory Settings");
 
         List<String> head = new ArrayList<>();
         head.add("<gray>Territory: <white>" + esc(c.displayName()));
-        head.add("<gray>Chunks: <white>" + c.size());
+        head.add("<gray>Size: <white>" + cm.sizeLine(c));
         head.add("<gray>Protections bought: <white>" + c.settings.purchasedPaidCount() + "<gray> of 4"
                 + " <gray>(<white>" + c.settings.activePaidCount() + " ON<gray>)");
-        head.add("<gray>Upkeep rate: <white>" + trim(cm.rate(c)) + " chunk-hours/h");
+        head.add("<gray>Upkeep rate: <white>" + trim(cm.rate(c)) + " hours/h");
         // Show the clock on this screen too, so a purchase visibly costs 24 hours.
         head.add("<gray>Upkeep left: <white>" + Util.duration(cm.remainingMs(c)));
         set(inv, h, 4, item(Material.PAPER, "<gold>Settings", head), null);
@@ -585,16 +649,63 @@ public final class GuiManager implements Listener {
     }
 
     /**
-     * One paid protection button. The lore is rebuilt from scratch on every render and is
-     * driven only by (purchased, enabled), so it can never show a stale buy prompt or an
-     * outdated status after a click.
+     * Confirmation screen shown before an unpurchased protection is bought. It spells out
+     * the three things a player can regret: the 24 hour cost, the permanent upkeep
+     * increase, and that nothing is ever refunded.
      */
+    public void openConfirmBuy(Player p, Claim c, SettingsService.Flag f) {
+        if (c == null) {
+            plugin.send(p, "no-claim-here");
+            return;
+        }
+        SettingsService svc = plugin.settings();
+        if (!svc.canManage(p, c)) {
+            plugin.send(p, "not-your-claim");
+            return;
+        }
+        if (c.settings.isPurchased(f.id)) {
+            later(() -> openSettings(p, c));
+            return;
+        }
+        long left = plugin.claims().remainingMs(c);
+        MenuHolder h = new MenuHolder(Type.CONFIRM_BUY, c);
+        Inventory inv = create(h, 27, "<dark_green><bold>Buy " + esc(f.title) + "?");
+
+        int owned = c.settings.purchasedPaidCount();
+        double nowFactor = 1.0 + svc.upkeepMultiplier() * owned;
+        double nextFactor = 1.0 + svc.upkeepMultiplier() * (owned + 1);
+        int pct = (int) Math.round(svc.upkeepMultiplier() * 100);
+        List<String> cost = new ArrayList<>();
+        cost.add("<gray>" + f.description);
+        cost.add("");
+        cost.add("<gray>Cost: <white>24 hours <gray>of this territory's upkeep");
+        cost.add("<gray>Upkeep left now: <white>" + Util.duration(left));
+        cost.add("<gray>After buying: <white>"
+                + Util.duration(Math.max(0L, left - ClaimManager.PROTECTION_COST_MS)));
+        cost.add("");
+        cost.add("<gray>Permanent: upkeep cost <white>+" + pct + "%<gray> ("
+                + trim(nowFactor) + "x -> <white>" + trim(nextFactor) + "x<gray>)");
+        cost.add("<gray>Costs stay higher even while this is switched OFF.");
+        cost.add("");
+        cost.add("<red>No refunds. 24 hours is gone for good, and");
+        cost.add("<red>toggling it off later gives nothing back.");
+        set(inv, h, 4, item(Material.REDSTONE_BLOCK, "<red>" + f.title, cost), null);
+
+        set(inv, h, 11, item(Material.LIME_CONCRETE, "<green>Yes, buy for 24 hours",
+                "<gray>Deducts 24 hours and switches it ON.",
+                "<gray>You keep it and can toggle it free from now on."),
+                "buy_confirm:" + f.id);
+        set(inv, h, 15, item(Material.RED_CONCRETE, "<red>No, go back",
+                "<gray>Nothing is charged."), "settings");
+        fillEmpty(inv);
+        p.openInventory(inv);
+    }
+
     private ItemStack paidItem(Player p, Claim c, SettingsService.Flag f) {
         SettingsService svc = plugin.settings();
         boolean owned = c.settings.isPurchased(f.id);
         boolean on = c.settings.isEnabled(f.id);
         boolean locked = svc.isLocked(f) && !p.hasPermission("materialclaim.admin");
-
         Material icon = locked ? Material.BARRIER : on ? Material.RED_DYE : Material.LIME_DYE;
         List<String> lore = new ArrayList<>();
         lore.add("<gray>" + f.description);
@@ -626,6 +737,21 @@ public final class GuiManager implements Listener {
         return item(icon, (on ? "<green>" : "<white>") + f.title, lore);
     }
 
+    private ItemStack freeItem(Player p, Claim c, SettingsService.Flag f) {
+        SettingsService svc = plugin.settings();
+        boolean on = svc.get(c, f);
+        boolean locked = svc.isLocked(f) && !p.hasPermission("materialclaim.admin");
+        Material icon = locked ? Material.BARRIER : on ? Material.LIME_DYE : Material.GRAY_DYE;
+        List<String> lore = new ArrayList<>();
+        lore.add("<gray>" + f.description);
+        lore.add("<gray>Status: <white>" + (on ? "Allowed" : "Blocked"));
+        lore.add("<yellow>Click to toggle");
+        if (locked) {
+            lore.add("<red>Locked by the server admin.");
+        }
+        return item(icon, "<white>" + f.title, lore);
+    }
+
     /** The PvP button: choose who may fight. Everyone means no protection. */
     private ItemStack pvpItem(Player p, Claim c) {
         SettingsService svc = plugin.settings();
@@ -655,32 +781,15 @@ public final class GuiManager implements Listener {
             lore.add("<gray>Purchased <gray>(free to toggle, non-refundable)");
             lore.add("<gray>Changing mode is free.");
         }
-        lore.add("<yellow>Click to choose who may fight");
         if (locked) {
             lore.add("<red>Locked by the server admin.");
         }
-        return item(on ? Material.RED_DYE : Material.LIME_DYE,
+        return item(locked ? Material.BARRIER : on ? Material.RED_DYE : Material.LIME_DYE,
                 (on ? "<green>" : "<white>") + f.title, lore);
     }
 
-    private ItemStack freeItem(Player p, Claim c, SettingsService.Flag f) {
-        SettingsService svc = plugin.settings();
-        boolean on = svc.get(c, f);
-        boolean locked = svc.isLocked(f) && !p.hasPermission("materialclaim.admin");
-        Material icon = locked ? Material.BARRIER : on ? Material.LIME_DYE : Material.GRAY_DYE;
-        List<String> lore = new ArrayList<>();
-        lore.add("<gray>" + f.description);
-        lore.add("<gray>Status: <white>" + (on ? "Allowed" : "Blocked"));
-        lore.add("<yellow>Click to toggle");
-        if (locked) {
-            lore.add("<red>Locked by the server admin.");
-        }
-        return item(icon, "<white>" + f.title, lore);
-    }
-
     /** PvP scope sub-menu, only meaningful while PvP protection is active. */
-    public void openPvpScope(Player p, ChunkKey key) {
-        Claim c = plugin.claims().get(key);
+    public void openPvpScope(Player p, Claim c) {
         if (c == null) {
             plugin.send(p, "no-claim-here");
             return;
@@ -689,7 +798,7 @@ public final class GuiManager implements Listener {
             plugin.send(p, "not-your-claim");
             return;
         }
-        MenuHolder h = new MenuHolder(Type.PVP_SCOPE, key);
+        MenuHolder h = new MenuHolder(Type.PVP_SCOPE, c);
         Inventory inv = create(h, 27, "<dark_green><bold>PvP scope");
         boolean pvpOn = c.settings.isEnabled(SettingsService.Flag.PVP.id);
         set(inv, h, 4, item(Material.IRON_SWORD, "<gold>Who may PvP here",
@@ -702,7 +811,8 @@ public final class GuiManager implements Listener {
             boolean cur = scope == TerritorySettings.PvpScope.EVERYONE
                     ? !pvpOn
                     : pvpOn && c.settings.pvpScope == scope;
-            String name = scope == TerritorySettings.PvpScope.EVERYONE ? "everyone (no protection)" : scope.label();
+            String name = scope == TerritorySettings.PvpScope.EVERYONE
+                    ? "everyone (no protection)" : scope.label();
             set(inv, h, slot++, item(cur ? Material.LIME_DYE : Material.GRAY_DYE,
                     (cur ? "<green>" : "<white>") + name,
                     cur ? "<green>Selected" : "<yellow>Click to select"), "scope:" + scope.name());
@@ -714,33 +824,13 @@ public final class GuiManager implements Listener {
 
     // ----------------------------------------------------------------- borders
 
-    /** Shows the outline of the whole territory (or just this chunk if it is unclaimed). */
-    public void showBorders(Player p, ChunkKey key) {
-        Claim c = plugin.claims().get(key);
-        Set<ChunkKey> set = c == null ? Set.of(key) : c.chunks;
-        UUID worldId = p.getWorld().getUID();
-        final List<double[]> edges = new ArrayList<>();
-        for (ChunkKey k : set) {
-            if (!k.world().equals(worldId)) {
-                continue;
-            }
-            double x1 = k.x() * 16.0;
-            double z1 = k.z() * 16.0;
-            double x2 = x1 + 16.0;
-            double z2 = z1 + 16.0;
-            if (!set.contains(new ChunkKey(k.world(), k.x(), k.z() - 1))) {
-                edges.add(new double[]{x1, z1, x2, z1});
-            }
-            if (!set.contains(new ChunkKey(k.world(), k.x(), k.z() + 1))) {
-                edges.add(new double[]{x1, z2, x2, z2});
-            }
-            if (!set.contains(new ChunkKey(k.world(), k.x() - 1, k.z()))) {
-                edges.add(new double[]{x1, z1, x1, z2});
-            }
-            if (!set.contains(new ChunkKey(k.world(), k.x() + 1, k.z()))) {
-                edges.add(new double[]{x2, z1, x2, z2});
-            }
+    /** Shows the outline of the territory the player is standing in, or of this claim. */
+    public void showBorders(Player p, Claim c) {
+        if (c == null) {
+            plugin.send(p, "no-claim-here");
+            return;
         }
+        List<Area> areas = new ArrayList<>(c.areas);
         new BukkitRunnable() {
             int runs = 0;
 
@@ -751,24 +841,41 @@ public final class GuiManager implements Listener {
                     return;
                 }
                 double px = p.getLocation().getX();
-                double py = p.getLocation().getY();
                 double pz = p.getLocation().getZ();
-                for (double[] e : edges) {
-                    double cx = (e[0] + e[2]) / 2.0 - px;
-                    double cz = (e[1] + e[3]) / 2.0 - pz;
-                    if (cx * cx + cz * cz > 96.0 * 96.0) {
+                for (Area a : areas) {
+                    if (!a.world().equals(p.getWorld().getUID())) {
                         continue;
                     }
-                    for (int i = 0; i <= 8; i++) {
-                        double x = e[0] + (e[2] - e[0]) * i / 8.0;
-                        double z = e[1] + (e[3] - e[1]) * i / 8.0;
-                        for (double dy = 0; dy <= 2; dy += 1) {
-                            p.spawnParticle(Particle.END_ROD, x, py + dy, z, 1, 0, 0, 0, 0);
-                        }
+                    // Only outline rectangles near the player, to keep particles cheap.
+                    double dx = Math.max(0, Math.max(a.minX() - px, px - a.maxX()));
+                    double dz = Math.max(0, Math.max(a.minZ() - pz, pz - a.maxZ()));
+                    if (dx * dx + dz * dz > 96.0 * 96.0) {
+                        continue;
                     }
+                    drawArea(p, a);
                 }
             }
         }.runTaskTimer(plugin, 0L, 10L);
+    }
+
+    private void drawArea(Player p, Area a) {
+        double py = p.getLocation().getY();
+        List<double[]> edges = new ArrayList<>();
+        edges.add(new double[]{a.minX(), a.minZ(), a.maxX(), a.minZ()});
+        edges.add(new double[]{a.minX(), a.maxZ(), a.maxX(), a.maxZ()});
+        edges.add(new double[]{a.minX(), a.minZ(), a.minX(), a.maxZ()});
+        edges.add(new double[]{a.maxX(), a.minZ(), a.maxX(), a.maxZ()});
+        for (double[] e : edges) {
+            int steps = Math.max(2, (int) Math.round(Math.max(
+                    Math.abs(e[2] - e[0]), Math.abs(e[3] - e[1]))));
+            for (int i = 0; i <= steps; i++) {
+                double x = e[0] + (e[2] - e[0]) * i / steps;
+                double z = e[1] + (e[3] - e[1]) * i / steps;
+                for (double dy = 0; dy <= 2; dy += 1) {
+                    p.spawnParticle(Particle.END_ROD, x, py + dy, z, 1, 0, 0, 0, 0);
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------ clicks
@@ -802,20 +909,46 @@ public final class GuiManager implements Listener {
         ClaimManager cm = plugin.claims();
         String[] parts = action.split(":", 2);
         String arg = parts.length > 1 ? parts[1] : "";
-        ChunkKey key = h.key;
+        Claim c = h.claim;
 
         switch (parts[0]) {
             case "close" -> p.closeInventory();
-            case "main" -> later(() -> openMain(p));
-            case "claim" -> {
-                cm.claimHere(p);
-                later(() -> openMain(p));
+            case "main" -> {
+                if (c == null) {
+                    later(() -> openMain(p));
+                } else {
+                    later(() -> openClaim(p, c));
+                }
             }
-            case "pay_menu" -> later(() -> openPay(p, key));
+            case "give_shovel" -> {
+                p.getInventory().addItem(new ItemStack(Material.GOLDEN_SHOVEL));
+                plugin.send(p, "tools-given", "tool", "Golden Shovel");
+                p.closeInventory();
+            }
+            case "give_stick" -> {
+                p.getInventory().addItem(new ItemStack(Material.STICK));
+                plugin.send(p, "tools-given", "tool", "Stick");
+                p.closeInventory();
+            }
+            case "sel_confirm" -> {
+                ClaimManager.Quote q = QUOTES.remove(p.getUniqueId());
+                p.closeInventory();
+                if (q == null) {
+                    return;
+                }
+                if (cm.purchase(p, q)) {
+                    cm.saveNow();
+                    Claim made = cm.ownedClaimAt(p.getUniqueId(), q.area());
+                    if (made != null) {
+                        later(() -> openClaim(p, made));
+                    }
+                }
+            }
+            case "pay_menu" -> later(() -> openPay(p, c));
             case "pay" -> {
                 double hours = arg.equals("max") ? 0 : Double.parseDouble(arg);
-                cm.payHere(p, key, hours);
-                later(() -> openPay(p, key));
+                cm.payHere(p, c, hours);
+                later(() -> openPay(p, c));
             }
             case "choose" -> {
                 if (arg.equals("AUTO")) {
@@ -825,80 +958,99 @@ public final class GuiManager implements Listener {
                 }
                 later(() -> {
                     if (h.type == Type.PAY) {
-                        openPay(p, key);
+                        openPay(p, c);
                     }
                 });
             }
-            case "trust_menu" -> later(() -> openTrustAdd(p, key));
-            case "trust_list" -> later(() -> openTrustList(p, key));
+            case "trust_menu" -> later(() -> openTrustAdd(p, c));
+            case "trust_list" -> later(() -> openTrustList(p, c));
             case "trust" -> {
-                UUID id = UUID.fromString(arg);
-                cm.trust(p, key, id, nameOf(id));
-                later(() -> openTrustAdd(p, key));
+                UUID id = parseId(arg);
+                if (id != null) {
+                    cm.trust(p, c, id, nameOf(id));
+                    later(() -> openTrustAdd(p, c));
+                }
             }
             case "member" -> {
                 UUID id = parseId(arg);
                 if (id != null) {
-                    later(() -> openMember(p, key, id));
+                    later(() -> openMember(p, c, id));
                 }
             }
             case "setlevel" -> {
                 String[] bits = arg.split(":");
                 UUID id = bits.length == 2 ? parseId(bits[0]) : null;
                 if (id != null) {
-                    cm.trust(p, key, id, nameOf(id), TrustList.Level.parse(bits[1]));
-                    later(() -> openMember(p, key, id));
+                    cm.trust(p, c, id, nameOf(id), TrustList.Level.parse(bits[1]));
+                    later(() -> openMember(p, c, id));
                 }
             }
             case "removemember" -> {
                 UUID id = parseId(arg);
                 if (id != null) {
-                    cm.untrust(p, key, id, nameOf(id));
-                    later(() -> openTrustList(p, key));
+                    cm.untrust(p, c, id, nameOf(id));
+                    later(() -> openTrustList(p, c));
                 }
             }
-            case "untrust" -> {
-                UUID id = UUID.fromString(arg);
-                cm.untrust(p, key, id, nameOf(id));
-                later(() -> openTrustList(p, key));
+            case "remove_confirm" -> {
+                if (c != null && h.selection != null) {
+                    p.closeInventory();
+                    if (cm.shrink(p, c, h.selection)) {
+                        cm.saveNow();
+                        Claim still = cm.at(p.getLocation());
+                        later(() -> {
+                            if (still != null && !still.isServer()
+                                    && p.getUniqueId().equals(still.owner)) {
+                                openClaim(p, still);
+                            } else {
+                                openNoClaim(p);
+                            }
+                        });
+                    }
+                }
             }
-            case "unclaim_menu" -> later(() -> openUnclaim(p, key));
+            case "unclaim_menu" -> later(() -> openUnclaim(p, c));
             case "unclaim_confirm" -> {
-                cm.unclaim(p, key);
+                cm.unclaim(p, c);
                 p.closeInventory();
+            }
+            case "openclaim" -> {
+                List<Claim> list = CLAIM_LISTS.get(p.getUniqueId());
+                if (list != null) {
+                    try {
+                        Claim picked = list.get(Integer.parseInt(arg));
+                        if (picked != null && p.getUniqueId().equals(picked.owner)) {
+                            later(() -> openClaim(p, picked));
+                        }
+                    } catch (IndexOutOfBoundsException | NumberFormatException ignored) {
+                        later(() -> openMyClaims(p));
+                    }
+                }
             }
             case "buy_confirm" -> {
                 SettingsService.Flag flag = SettingsService.Flag.parse(arg);
-                Claim c = cm.get(key);
                 if (flag == null || c == null) {
                     return;
                 }
-                // changeFlag() re-checks the 24 hours and does the deduction, the purchase
-                // and the cost increase in one step. Save straight away so it cannot be lost.
                 if (cm.changeFlag(p, c, flag, true)) {
                     cm.saveNow();
                 }
-                later(() -> openSettings(p, key));
+                later(() -> openSettings(p, c));
             }
             case "borders" -> {
                 p.closeInventory();
-                showBorders(p, key);
+                showBorders(p, c);
             }
             case "my_claims" -> later(() -> openMyClaims(p));
-            case "settings" -> later(() -> openSettings(p, key));
-            case "pvp_scope" -> later(() -> openPvpScope(p, key));
+            case "settings" -> later(() -> openSettings(p, c));
+            case "pvp_scope" -> later(() -> openPvpScope(p, c));
             case "flag" -> {
                 SettingsService.Flag flag = SettingsService.Flag.parse(arg);
-                if (flag == null) {
+                if (flag == null || c == null) {
                     return;
                 }
-                // PvP has its own sub-menu with every choice.
                 if (flag == SettingsService.Flag.PVP) {
-                    later(() -> openPvpScope(p, key));
-                    return;
-                }
-                Claim c = cm.get(key);
-                if (c == null) {
+                    later(() -> openPvpScope(p, c));
                     return;
                 }
                 boolean owned = c.settings.isPurchased(flag.id);
@@ -906,47 +1058,39 @@ public final class GuiManager implements Listener {
                 // without this check switching a free toggle ON opened a bogus "Buy ... for
                 // 24 hours?" screen.
                 if (flag.isPaid() && !owned && !plugin.settings().get(c, flag)) {
-                    // Buying always needs a confirmation screen. Check the upkeep up front so
-                    // an unaffordable purchase is refused before the player is even asked.
                     if (cm.remainingMs(c) < ClaimManager.PROTECTION_COST_MS) {
                         plugin.send(p, "flag-need-upkeep", "flag", flag.title,
                                 "time", Util.duration(cm.remainingMs(c)));
                         return;
                     }
-                    later(() -> openConfirmBuy(p, key, flag));
+                    later(() -> openConfirmBuy(p, c, flag));
                     return;
                 }
-                // Already bought: a free toggle. State first, then persist immediately so
-                // reopening the menu cannot lose it. changeFlag() reports exactly this same
-                // boolean, so chat and the re-rendered menu always agree.
                 boolean newState = !plugin.settings().get(c, flag);
                 if (cm.changeFlag(p, c, flag, newState)) {
                     cm.saveNow();
                 }
-                later(() -> openSettings(p, key));
+                later(() -> openSettings(p, c));
             }
             case "scope" -> {
-                Claim c = cm.get(key);
                 if (c == null) {
                     return;
                 }
                 TerritorySettings.PvpScope scope = TerritorySettings.PvpScope.parse(arg);
                 boolean pvpOwned = c.settings.isPurchased(SettingsService.Flag.PVP.id);
                 if (!pvpOwned && scope != TerritorySettings.PvpScope.EVERYONE) {
-                    // Picking a protective scope on an unbought PvP is a purchase, so it needs
-                    // the same confirmation screen as every other protection.
                     if (cm.remainingMs(c) < ClaimManager.PROTECTION_COST_MS) {
                         plugin.send(p, "flag-need-upkeep", "flag", SettingsService.Flag.PVP.title,
                                 "time", Util.duration(cm.remainingMs(c)));
                         return;
                     }
-                    later(() -> openConfirmBuy(p, key, SettingsService.Flag.PVP));
+                    later(() -> openConfirmBuy(p, c, SettingsService.Flag.PVP));
                     return;
                 }
                 if (cm.setPvpScope(p, c, scope)) {
                     cm.saveNow();
                 }
-                later(() -> openPvpScope(p, key));
+                later(() -> openPvpScope(p, c));
             }
             case "text" -> {
                 SettingsService.TextInput field;
@@ -955,15 +1099,11 @@ public final class GuiManager implements Listener {
                 } catch (IllegalArgumentException ex) {
                     return;
                 }
-                Claim c = cm.get(key);
-                if (c == null) {
-                    return;
-                }
-                if (!plugin.settings().canManage(p, c)) {
+                if (c == null || !plugin.settings().canManage(p, c)) {
                     plugin.send(p, "not-your-claim");
                     return;
                 }
-                PENDING.put(p.getUniqueId(), new PendingText(key, field));
+                PENDING.put(p.getUniqueId(), new PendingText(c, field));
                 p.closeInventory();
                 plugin.send(p, "text-prompt");
             }

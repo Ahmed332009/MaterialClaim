@@ -41,21 +41,32 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             gui.openMain(p);
             return true;
         }
-        ChunkKey here = cm.keyOf(p.getLocation());
+        Claim here = cm.at(p.getLocation());
         switch (args[0].toLowerCase(Locale.ROOT)) {
             case "menu" -> gui.openMain(p);
-            case "claim" -> cm.claimHere(p);
+            case "claim" -> {
+                // The shovel is the normal way; this keeps a chat shortcut and claims the
+                // chunk the player stands in.
+                cm.claimHere(p);
+            }
             case "unclaim" -> cm.unclaim(p, here);
             case "pay" -> gui.openPay(p, here);
             case "list" -> gui.openMyClaims(p);
             case "borders" -> gui.showBorders(p, here);
+            case "shovel" -> {
+                p.getInventory().addItem(new org.bukkit.inventory.ItemStack(org.bukkit.Material.GOLDEN_SHOVEL));
+                plugin.send(p, "tools-given", "tool", "Golden Shovel");
+            }
+            case "stick" -> {
+                p.getInventory().addItem(new org.bukkit.inventory.ItemStack(org.bukkit.Material.STICK));
+                plugin.send(p, "tools-given", "tool", "Stick");
+            }
             case "info" -> {
-                Claim c = cm.get(here);
-                if (c == null) {
+                if (here == null) {
                     plugin.send(p, "no-claim-here");
                 } else {
-                    plugin.sendMini(p, "<gray>Owner: <white>" + (c.isServer() ? "Server" : c.ownerName)
-                            + " <gray>| <white>" + c.size() + " chunk(s) <gray>| " + cm.statusLine(c));
+                    plugin.sendMini(p, "<gray>Owner: <white>" + (here.isServer() ? "Server" : here.ownerName)
+                            + " <gray>| <white>" + cm.sizeLine(here) + " <gray>| " + cm.statusLine(here));
                 }
             }
             case "flags" -> flags(p, args.length > 1 ? args[1] : null);
@@ -110,7 +121,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             }
             return found;
         }
-        Claim here = cm.get(cm.keyOf(p.getLocation()));
+        Claim here = cm.at(p.getLocation());
         if (here == null) {
             plugin.send(p, "no-claim-here");
         }
@@ -220,7 +231,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
         }
         SettingsService svc = plugin.settings();
         plugin.sendMini(p, "<gray>Settings for <white>" + plugin.escape(c.displayName())
-                + "<gray> (" + c.size() + " chunks)");
+                + "<gray> (" + c.blocks() + " blocks)");
         for (SettingsService.Flag f : SettingsService.Flag.values()) {
             // get() reports "enabled/protecting" for paid flags and "allowed" for free
             // toggles, so this reads the same way as the GUI.
@@ -286,7 +297,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
         List<String> out = new ArrayList<>();
         if (args.length == 1) {
             for (String s : List.of("menu", "claim", "unclaim", "pay", "list", "borders", "info",
-                    "flags", "flag", "trust", "untrust", "admin")) {
+                    "flags", "flag", "trust", "untrust", "shovel", "stick", "admin")) {
                 if (s.startsWith(args[0].toLowerCase(Locale.ROOT))) {
                     out.add(s);
                 }

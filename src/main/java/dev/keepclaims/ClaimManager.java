@@ -15,16 +15,12 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.Deque;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -32,67 +28,61 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Holds every territory (group of connected chunks), saves them to claims.yml and runs the
- * claim, pay, trust and unclaim operations.
+ * Holds every territory, saves them to claims.yml and runs the claim, pay, trust and
+ * unclaim operations.
  *
- * Upkeep model: a territory of n chunks drains upkeep at n * perChunkMultiplier(n)
- * "chunk-hours" per hour. An item worth v hours adds v chunk-hours to the pool.
- * Remaining time = pool / rate. When the size changes the pool is kept and the time is recomputed.
+ * <p>Land is measured in blocks. A territory is a set of non-overlapping rectangles, so it
+ * can be any size and any shape built from rectangles, and it covers the whole vertical
+ * column from bedrock to build limit (like GriefPrevention).
+ *
+ * <p>Upkeep model: an item worth v hours is worth v hours of upkeep for a territory whose
+ * rate is 1.0. The rate is {@code blocks * perBlockHours * groupFactor(blocks) *
+ * protectionFactor}. Remaining time = banked hours / rate, so the same items buy less time
+ * as a territory grows or buys protections. The banked hours are in "hour units", so
+ * resizing recomputes the time from the pool rather than losing it.
  */
 public final class ClaimManager {
     private static final long HOUR_MS = 3_600_000L;
     private static final long DAY_MS = 86_400_000L;
+    /** How far the spatial index groups blocks. Must be a power of two. */
+    private static final int CELL_SHIFT = 6;
+    private static final int CELL = 1 << CELL_SHIFT;
 
     private final KeepClaims plugin;
-    private final Map<ChunkKey, Claim> byChunk = new ConcurrentHashMap<>();
+    /** Spatial index: cell key -> territory holding some of that cell. */
+    private final Map<Long, Set<Claim>> index = new ConcurrentHashMap<>();
     private final Set<Claim> territories = ConcurrentHashMap.newKeySet();
     private final File file;
     private BukkitTask pendingSave;
-    private List<double[]> tiers = new ArrayList<>();
 
     public ClaimManager(KeepClaims plugin) {
         this.plugin = plugin;
         this.file = new File(plugin.getDataFolder(), "claims.yml");
     }
 
-    // ---------------------------------------------------------------- settings
-
     public void reloadSettings() {
-        List<double[]> list = new ArrayList<>();
-        for (Map<?, ?> m : plugin.getConfig().getMapList("group-upkeep")) {
-            Object upTo = m.get("up-to");
-            Object mult = m.get("multiplier");
-            if (upTo instanceof Number a && mult instanceof Number b) {
-                list.add(new double[]{a.doubleValue(), b.doubleValue()});
-            }
-        }
-        list.sort(Comparator.comparingDouble(t -> t[0]));
-        if (list.isEmpty()) {
-            list.add(new double[]{Integer.MAX_VALUE, 1.0});
-        }
-        tiers = list;
+        plugin.pricing().reload();
     }
 
-    /** Upkeep multiplier per chunk for a territory of the given size. */
-    public double perChunkMultiplier(int size) {
-        for (double[] t : tiers) {
-            if (size <= t[0]) {
-                return Math.max(0.01, t[1]);
-            }
-        }
-        return Math.max(0.01, tiers.get(tiers.size() - 1)[1]);
-    }
+    // ------------------------------------------------------------------- rates
 
-    /** Chunk-hours drained per hour by this territory, including paid protections. */
+    /** Hours of upkeep drained per hour by this territory, including paid protections. */
     public double rate(Claim c) {
-        int n = Math.max(1, c.size());
-        return n * perChunkMultiplier(n) * plugin.settings().upkeepFactor(c);
+        return baseRate(c) * plugin.settings().upkeepFactor(c);
     }
 
-    /** Chunk-hours drained per hour by this territory before paid protections. */
+    /** Hours of upkeep drained per hour before paid protections. */
     public double baseRate(Claim c) {
-        int n = Math.max(1, c.size());
-        return n * perChunkMultiplier(n);
+        long blocks = Math.max(1L, c.blocks());
+        return plugin.pricing().upkeepRate(blocks);
+    }
+
+    /**
+     * The upkeep multiplier for a territory, i.e. how many item-hours one hour of upkeep
+     * costs. Kept for the payment code, which speaks in "raw item hours".
+     */
+    public double multiplier(Claim c) {
+        return rate(c);
     }
 
     private long graceMs() {
@@ -108,20 +98,24 @@ public final class ClaimManager {
         return list.isEmpty() || list.contains(w.getName());
     }
 
-    /** Maximum total chunks a player may own. */
-    public int limitFor(Player p) {
-        int limit = plugin.getConfig().getInt("max-claims-default", 25);
+    /** Maximum total blocks a player may own. */
+    public long limitFor(Player p) {
+        // Kept as a block budget: the old config counted chunks, so it is scaled up.
+        int chunks = plugin.getConfig().getInt("max-claims-default", 25);
+        long limit = (long) chunks * ClaimPricing.BLOCKS_PER_CHUNK;
         for (PermissionAttachmentInfo info : p.getEffectivePermissions()) {
             String perm = info.getPermission();
             if (info.getValue() && perm.startsWith("materialclaim.limit.")) {
                 try {
-                    limit = Math.max(limit, Integer.parseInt(perm.substring("materialclaim.limit.".length())));
+                    long v = Long.parseLong(perm.substring("materialclaim.limit.".length()));
+                    limit = Math.max(limit, v * ClaimPricing.BLOCKS_PER_CHUNK);
                 } catch (NumberFormatException ignored) {
                     // not a number, skip
                 }
             }
         }
-        return limit;
+        long absolute = plugin.getConfig().getLong("max-claim-blocks", 0L);
+        return absolute > 0 ? Math.min(limit, absolute) : limit;
     }
 
     /** Copies every setting from src into dst (used when a claim gains defaults). */
@@ -142,43 +136,62 @@ public final class ClaimManager {
         dst.purchased.addAll(c.purchased);
     }
 
-    public int ownedChunks(UUID owner) {
-        int total = 0;
+    public long ownedBlocks(UUID owner) {
+        long total = 0;
         for (Claim c : territories) {
             if (owner.equals(c.owner)) {
-                total += c.size();
+                total += c.blocks();
             }
         }
         return total;
     }
 
-    // ----------------------------------------------------------------- storage
+    // ------------------------------------------------------------------ index
 
-    private void register(Claim c) {
-        for (ChunkKey k : c.chunks) {
-            byChunk.put(k, c);
+    private static long cellKey(UUID world, int cx, int cz) {
+        // Mix the world hash into the high bits so worlds never collide.
+        return ((long) world.hashCode() << 40) ^ (((long) cx & 0xFFFFFL) << 20) ^ ((long) cz & 0xFFFFFL);
+    }
+
+    private void indexClaim(Claim c) {
+        for (Area a : c.areas) {
+            for (int cx = a.minX() >> CELL_SHIFT; cx <= a.maxX() >> CELL_SHIFT; cx++) {
+                for (int cz = a.minZ() >> CELL_SHIFT; cz <= a.maxZ() >> CELL_SHIFT; cz++) {
+                    index.computeIfAbsent(cellKey(a.world(), cx, cz),
+                            k -> ConcurrentHashMap.newKeySet()).add(c);
+                }
+            }
         }
         territories.add(c);
     }
 
-    private void removeTerritory(Claim c) {
-        for (ChunkKey k : c.chunks) {
-            byChunk.remove(k, c);
+    private void unindexClaim(Claim c) {
+        for (Area a : c.areas) {
+            for (int cx = a.minX() >> CELL_SHIFT; cx <= a.maxX() >> CELL_SHIFT; cx++) {
+                for (int cz = a.minZ() >> CELL_SHIFT; cz <= a.maxZ() >> CELL_SHIFT; cz++) {
+                    Set<Claim> set = index.get(cellKey(a.world(), cx, cz));
+                    if (set != null) {
+                        set.remove(c);
+                        if (set.isEmpty()) {
+                            index.remove(cellKey(a.world(), cx, cz), set);
+                        }
+                    }
+                }
+            }
         }
         territories.remove(c);
     }
 
-    private static String keyString(ChunkKey k) {
-        return k.world() + ";" + k.x() + ";" + k.z();
+    /** Call after changing a territory's land, so the index matches the new shape. */
+    public void reindex(Claim c) {
+        unindexClaim(c);
+        indexClaim(c);
     }
 
-    private static ChunkKey parseKey(String s) {
-        String[] p = s.split(";");
-        return new ChunkKey(UUID.fromString(p[0]), Integer.parseInt(p[1]), Integer.parseInt(p[2]));
-    }
+    // ---------------------------------------------------------------- storage
 
     public void load() {
-        byChunk.clear();
+        index.clear();
         territories.clear();
         if (!file.exists()) {
             return;
@@ -200,130 +213,67 @@ public final class ClaimManager {
                     if (stored instanceof Map<?, ?> sm) {
                         c.settings.readFrom(sm);
                     }
-                    // Server claims (spawn, shops) are protected by default. Claims saved by an
-                    // older version have no marker, so they get the protected defaults once.
                     boolean marked = stored instanceof Map<?, ?> sm2 && Boolean.TRUE.equals(sm2.get("server-protected"));
                     if (owner == null && !marked) {
                         c.settings.applyServerDefaults();
                         upgraded = true;
                     }
                     c.trusted.readStored(m.get("trusted"));
-                    if (m.get("chunks") instanceof List<?> cl) {
-                        for (Object o : cl) {
-                            c.chunks.add(parseKey(String.valueOf(o)));
+                    // New format: explicit rectangles. Old format: chunk lists, converted.
+                    if (m.get("areas") instanceof List<?> al) {
+                        for (Object o : al) {
+                            Area a = parseArea(String.valueOf(o));
+                            if (a != null) {
+                                c.addArea(a);
+                            }
                         }
+                    } else if (m.get("chunks") instanceof List<?> cl) {
+                        for (Object o : cl) {
+                            Area a = chunkArea(String.valueOf(o));
+                            if (a != null) {
+                                c.addArea(a);
+                            }
+                        }
+                        upgraded = true;
                     }
-                    if (!c.chunks.isEmpty()) {
-                        register(c);
+                    if (c.areas.isEmpty()) {
+                        continue;
                     }
-                } catch (Exception ex) {
-                    plugin.getLogger().warning("Skipping a bad territory entry: " + ex.getMessage());
+                    indexClaim(c);
+                } catch (RuntimeException ex) {
+                    plugin.getLogger().warning("Skipping unreadable territory entry: " + ex.getMessage());
                 }
             }
-        } else if (y.isList("claims")) {
-            migrateOld(y);
         }
         if (upgraded) {
+            plugin.getLogger().info("Upgraded claim data to block areas (chunk claims became rectangles).");
             markDirty();
         }
-        plugin.getLogger().info("Loaded " + territories.size() + " territories (" + byChunk.size() + " chunks).");
     }
 
-    private static final class Old {
-        ChunkKey key;
-        UUID owner;
-        String name;
-        long created;
-        long paid;
-        final TrustList trusted = new TrustList();
+    /** Parses "world;minX;minZ;maxX;maxZ". */
+    private static Area parseArea(String s) {
+        String[] p = s.split(";");
+        if (p.length != 5) {
+            return null;
+        }
+        return new Area(UUID.fromString(p[0]), Integer.parseInt(p[1]), Integer.parseInt(p[2]),
+                Integer.parseInt(p[3]), Integer.parseInt(p[4]));
     }
 
-    /** Converts the old one-claim-per-chunk file format into connected territories. */
-    private void migrateOld(YamlConfiguration y) {
-        List<Old> olds = new ArrayList<>();
-        for (Map<?, ?> m : y.getMapList("claims")) {
-            try {
-                Old o = new Old();
-                o.key = new ChunkKey(UUID.fromString(String.valueOf(m.get("world"))),
-                        ((Number) m.get("x")).intValue(), ((Number) m.get("z")).intValue());
-                String ownerText = String.valueOf(m.get("owner"));
-                o.owner = ownerText.equals("SERVER") ? null : UUID.fromString(ownerText);
-                o.name = m.get("owner-name") == null ? "Server" : String.valueOf(m.get("owner-name"));
-                o.created = ((Number) m.get("created")).longValue();
-                o.paid = ((Number) m.get("paid-until")).longValue();
-                if (m.get("trusted") instanceof List<?> tl) {
-                    for (Object t : tl) {
-                        o.trusted.set(UUID.fromString(String.valueOf(t)), TrustList.Level.BUILDER);
-                    }
-                }
-                olds.add(o);
-            } catch (Exception ex) {
-                plugin.getLogger().warning("Skipping a bad old claim entry: " + ex.getMessage());
-            }
+    /** Converts a legacy "world;chunkX;chunkZ" entry into the 16x16 block rectangle. */
+    private static Area chunkArea(String s) {
+        String[] p = s.split(";");
+        if (p.length != 3) {
+            return null;
         }
-        try {
-            Files.copy(file.toPath(), new File(plugin.getDataFolder(), "claims-old-format.yml").toPath(),
-                    StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException e) {
-            plugin.getLogger().warning("Could not back up the old claims file: " + e.getMessage());
-        }
-        long now = System.currentTimeMillis();
-        Map<UUID, Map<ChunkKey, Old>> perOwner = new HashMap<>();
-        for (Old o : olds) {
-            if (o.owner == null) {
-                Claim c = new Claim(null, "Server", o.created, Long.MAX_VALUE);
-                c.settings.applyServerDefaults();
-                c.chunks.add(o.key);
-                register(c);
-            } else {
-                perOwner.computeIfAbsent(o.owner, k -> new LinkedHashMap<>()).put(o.key, o);
-            }
-        }
-        for (Map.Entry<UUID, Map<ChunkKey, Old>> e : perOwner.entrySet()) {
-            Map<ChunkKey, Old> map = e.getValue();
-            Set<ChunkKey> seen = new HashSet<>();
-            for (Old start : new ArrayList<>(map.values())) {
-                if (seen.contains(start.key)) {
-                    continue;
-                }
-                List<Old> group = new ArrayList<>();
-                Deque<ChunkKey> queue = new ArrayDeque<>();
-                queue.add(start.key);
-                seen.add(start.key);
-                while (!queue.isEmpty()) {
-                    ChunkKey k = queue.poll();
-                    group.add(map.get(k));
-                    for (ChunkKey n : neighbors(k)) {
-                        if (map.containsKey(n) && seen.add(n)) {
-                            queue.add(n);
-                        }
-                    }
-                }
-                double pool = 0;
-                long created = Long.MAX_VALUE;
-                long latestPaid = 0;
-                Claim c = new Claim(e.getKey(), start.name, now, now);
-                for (Old o : group) {
-                    pool += Math.max(0, o.paid - now) / (double) HOUR_MS;
-                    created = Math.min(created, o.created);
-                    latestPaid = Math.max(latestPaid, o.paid);
-                    for (var te : o.trusted.entries().entrySet()) {
-                        c.trusted.set(te.getKey(), te.getValue());
-                    }
-                    c.chunks.add(o.key);
-                }
-                c.created = created;
-                if (pool > 0) {
-                    long remaining = (long) (pool / rate(c) * HOUR_MS);
-                    c.paidUntil = now + Math.min(remaining, maxPrepaidMs());
-                } else {
-                    c.paidUntil = latestPaid;
-                }
-                register(c);
-            }
-        }
-        plugin.getLogger().info("Converted " + olds.size() + " old claims. Backup saved as claims-old-format.yml.");
-        markDirty();
+        int x = Integer.parseInt(p[1]) << 4;
+        int z = Integer.parseInt(p[2]) << 4;
+        return new Area(UUID.fromString(p[0]), x, z, x + 15, z + 15);
+    }
+
+    private static String areaString(Area a) {
+        return a.world() + ";" + a.minX() + ";" + a.minZ() + ";" + a.maxX() + ";" + a.maxZ();
     }
 
     public void markDirty() {
@@ -354,7 +304,8 @@ public final class ClaimManager {
                 settingsMap.put("server-protected", true);
             }
             m.put("settings", settingsMap);
-            m.put("chunks", c.chunks.stream().map(ClaimManager::keyString).toList());
+            m.put("blocks", c.blocks());
+            m.put("areas", c.areas.stream().map(ClaimManager::areaString).toList());
             out.add(m);
         }
         YamlConfiguration y = new YamlConfiguration();
@@ -369,42 +320,79 @@ public final class ClaimManager {
         }
     }
 
-    // ----------------------------------------------------------------- lookups
-
-    public ChunkKey keyOf(Location l) {
-        return new ChunkKey(l.getWorld().getUID(), l.getBlockX() >> 4, l.getBlockZ() >> 4);
-    }
+    // ---------------------------------------------------------------- lookups
 
     public Claim at(Location l) {
-        return l.getWorld() == null ? null : byChunk.get(keyOf(l));
+        if (l.getWorld() == null) {
+            return null;
+        }
+        return at(l.getWorld(), l.getBlockX(), l.getBlockZ());
     }
 
     public Claim at(Block b) {
-        return byChunk.get(new ChunkKey(b.getWorld().getUID(), b.getX() >> 4, b.getZ() >> 4));
+        return at(b.getWorld(), b.getX(), b.getZ());
     }
 
-    public Claim get(ChunkKey key) {
-        return byChunk.get(key);
+    public Claim at(World w, int x, int z) {
+        Set<Claim> set = index.get(cellKey(w.getUID(), x >> CELL_SHIFT, z >> CELL_SHIFT));
+        if (set == null) {
+            return null;
+        }
+        for (Claim c : set) {
+            if (c.contains(x, z)) {
+                return c;
+            }
+        }
+        return null;
     }
 
-    /** The player's territories, oldest first. */
     /** All territories, for admin listings. */
     public Set<Claim> all() {
         return territories;
     }
 
+    /** Every territory that overlaps the rectangle (any owner). */
+    public List<Claim> overlapping(Area probe) {
+        List<Claim> out = new ArrayList<>();
+        for (int cx = probe.minX() >> CELL_SHIFT; cx <= probe.maxX() >> CELL_SHIFT; cx++) {
+            for (int cz = probe.minZ() >> CELL_SHIFT; cz <= probe.maxZ() >> CELL_SHIFT; cz++) {
+                Set<Claim> set = index.get(cellKey(probe.world(), cx, cz));
+                if (set == null) {
+                    continue;
+                }
+                for (Claim c : set) {
+                    if (!out.contains(c) && c.overlaps(probe)) {
+                        out.add(c);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Every territory touching or overlapping the probe, owned by the given player. */
+    public Set<Claim> adjacentOwned(UUID owner, Area probe) {
+        Area halo = new Area(probe.world(), probe.minX() - 1, probe.minZ() - 1,
+                probe.maxX() + 1, probe.maxZ() + 1);
+        Set<Claim> out = new LinkedHashSet<>();
+        for (Claim c : overlapping(halo)) {
+            if (owner.equals(c.owner)) {
+                out.add(c);
+            }
+        }
+        return out;
+    }
+
     /**
-     * Finds a territory by its custom name, the owner's name (case insensitive), or a
-     * "x,z" chunk id as reported by /claims list. Used by the optional [territory]
-     * argument so admins can target a claim they are not standing in.
+     * Finds a territory by its custom name, the owner's name (case insensitive), a
+     * "x,z" block id as reported by /claims list, or a world+coordinates lookup.
      */
     public Claim findTerritory(String query) {
         if (query == null || query.isBlank()) {
             return null;
         }
         String q = query.trim();
-        String lower = q.toLowerCase(java.util.Locale.ROOT);
-        // "x,z" id
+        String lower = q.toLowerCase(Locale.ROOT);
         if (q.contains(",")) {
             String[] parts = q.split(",");
             if (parts.length == 2) {
@@ -412,10 +400,8 @@ public final class ClaimManager {
                     int x = Integer.parseInt(parts[0].trim());
                     int z = Integer.parseInt(parts[1].trim());
                     for (Claim c : territories) {
-                        for (ChunkKey k : c.chunks) {
-                            if (k.x() == x && k.z() == z) {
-                                return c;
-                            }
+                        if (c.contains(x, z)) {
+                            return c;
                         }
                     }
                 } catch (NumberFormatException ignored) {
@@ -444,63 +430,16 @@ public final class ClaimManager {
             }
         }
         list.sort(Comparator.comparingLong((Claim c) -> c.created)
-                .thenComparingInt((Claim c) -> c.chunks.iterator().next().x())
-                .thenComparingInt((Claim c) -> c.chunks.iterator().next().z()));
+                .thenComparing(Claim::shortId));
         return list;
     }
 
-    /** Chunks next to this one (sides only, or sides and corners if connect-diagonals is true). */
-    public List<ChunkKey> neighbors(ChunkKey k) {
-        boolean diagonals = plugin.getConfig().getBoolean("connect-diagonals", false);
-        List<ChunkKey> out = new ArrayList<>(8);
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dz = -1; dz <= 1; dz++) {
-                if (dx == 0 && dz == 0) {
-                    continue;
-                }
-                if (!diagonals && dx != 0 && dz != 0) {
-                    continue;
-                }
-                out.add(new ChunkKey(k.world(), k.x() + dx, k.z() + dz));
-            }
+    public String worldName(Claim c) {
+        UUID id = c.world();
+        if (id == null) {
+            return "unknown";
         }
-        return out;
-    }
-
-    /** The owner's territories that touch this chunk. */
-    public Set<Claim> adjacentOwned(UUID owner, ChunkKey key) {
-        Set<Claim> out = new LinkedHashSet<>();
-        for (ChunkKey n : neighbors(key)) {
-            Claim c = byChunk.get(n);
-            if (c != null && owner.equals(c.owner)) {
-                out.add(c);
-            }
-        }
-        return out;
-    }
-
-    private boolean connected(Set<ChunkKey> set) {
-        if (set.isEmpty()) {
-            return true;
-        }
-        Set<ChunkKey> seen = new HashSet<>();
-        Deque<ChunkKey> queue = new ArrayDeque<>();
-        ChunkKey first = set.iterator().next();
-        queue.add(first);
-        seen.add(first);
-        while (!queue.isEmpty()) {
-            ChunkKey k = queue.poll();
-            for (ChunkKey n : neighbors(k)) {
-                if (set.contains(n) && seen.add(n)) {
-                    queue.add(n);
-                }
-            }
-        }
-        return seen.size() == set.size();
-    }
-
-    public String worldName(ChunkKey key) {
-        World w = Bukkit.getWorld(key.world());
+        World w = Bukkit.getWorld(id);
         return w == null ? "unknown" : w.getName();
     }
 
@@ -532,7 +471,6 @@ public final class ClaimManager {
         }
         long left = remainingMs(c);
         if (left > 0) {
-            // timeLeft() formats (expiry - now) in epoch milliseconds; no tick/second mix.
             return "<green>Active <gray>- <white>" + Util.timeLeft(c.paidUntil) + " <gray>left";
         }
         if (c.paidUntil + graceMs() > System.currentTimeMillis()) {
@@ -542,74 +480,192 @@ public final class ClaimManager {
         return "<dark_red>Expired";
     }
 
-    // -------------------------------------------------------------- operations
+    /** "64 x 64 (4096 blocks)" for menus and messages. */
+    public String sizeLine(Claim c) {
+        Area b = c.bounds();
+        if (b == null) {
+            return "0 blocks";
+        }
+        return b.width() + " x " + b.depth() + " (" + c.blocks() + " blocks)";
+    }
 
-    public void claimHere(Player p) {
-        Location l = p.getLocation();
-        if (!worldEnabled(l.getWorld())) {
-            plugin.send(p, "world-disabled");
-            return;
-        }
-        ChunkKey key = keyOf(l);
-        Claim existing = byChunk.get(key);
-        if (existing != null) {
-            if (p.getUniqueId().equals(existing.owner)) {
-                plugin.send(p, "already-yours");
-            } else {
-                plugin.send(p, "already-claimed", "owner", existing.isServer() ? "the server" : existing.ownerName);
+    // ------------------------------------------------------------- selection
+
+    /**
+     * Extra land a selection would add: the part of the probe not already owned by this
+     * player. Overlapping your own land is free, so a resize only pays for new blocks.
+     */
+    public long newBlocks(UUID owner, Area probe) {
+        List<Area> remaining = new ArrayList<>();
+        remaining.add(probe);
+        for (Claim c : overlapping(probe)) {
+            if (!owner.equals(c.owner)) {
+                continue;
             }
-            return;
+            for (Area a : c.areas) {
+                List<Area> next = new ArrayList<>();
+                for (Area r : remaining) {
+                    next.addAll(Area.subtract(r, a));
+                }
+                remaining = next;
+            }
         }
-        int limit = limitFor(p);
-        if (ownedChunks(p.getUniqueId()) >= limit) {
-            plugin.send(p, "limit-reached", "limit", String.valueOf(limit));
-            return;
+        return Area.totalBlocks(remaining);
+    }
+
+    /** True when every block of the probe is already owned by this player. */
+    public boolean fullyOwned(UUID owner, Area probe) {
+        return newBlocks(owner, probe) == 0;
+    }
+
+    /** The territory of `owner` that the probe overlaps, or null. */
+    public Claim ownedClaimAt(UUID owner, Area probe) {
+        for (Claim c : overlapping(probe)) {
+            if (owner.equals(c.owner)) {
+                return c;
+            }
         }
-        Set<Claim> adjacent = adjacentOwned(p.getUniqueId(), key);
-        int newSize = 1;
+        return null;
+    }
+
+    // ------------------------------------------------------------ operations
+
+    /**
+     * The result of a shovel selection: what was created or grown, plus what it cost.
+     * Returned so the GUI can show the price before anything is charged.
+     */
+    public record Quote(Area area, long blocks, long newBlocks, Claim mergeBase,
+                        List<Claim> mergeOthers, long blocksAfter, double hours, String error) {
+        public boolean ok() {
+            return error == null;
+        }
+    }
+
+    /**
+     * Prices a selection without changing anything. This is what the automatic menu shows:
+     * the adjusted price for these many blocks, and how big the territory becomes.
+     */
+    public Quote quote(Player p, Area probe) {
+        UUID id = p.getUniqueId();
+        long total = probe.blocks();
+        if (!worldEnabled(p.getWorld())) {
+            return new Quote(probe, total, 0, null, List.of(), total,
+                    0, plugin.message("world-disabled"));
+        }
+        if (total < plugin.pricing().minimumBlocks()) {
+            return new Quote(probe, total, 0, null, List.of(), total, 0,
+                    plugin.message("selection-too-small",
+                            "min", String.valueOf(plugin.pricing().minimumBlocks())));
+        }
+        int cap = plugin.pricing().maxBlocks();
+        if (cap > 0 && total > cap) {
+            return new Quote(probe, total, 0, null, List.of(), total, 0,
+                    plugin.message("selection-too-big", "max", String.valueOf(cap)));
+        }
+        for (Claim c : overlapping(probe)) {
+            if (!id.equals(c.owner)) {
+                return new Quote(probe, total, 0, null, List.of(), total, 0,
+                        plugin.message("overlaps-other",
+                                "owner", c.isServer() ? "the server" : c.ownerName));
+            }
+        }
+        long fresh = newBlocks(id, probe);
+        List<Claim> owned = new ArrayList<>();
+        for (Claim c : overlapping(probe)) {
+            if (id.equals(c.owner)) {
+                owned.add(c);
+            }
+        }
+        // Everything the player already owns here plus the new blocks.
+        long after = fresh;
+        for (Claim c : owned) {
+            after += c.blocks();
+        }
+        long budget = limitFor(p);
+        if (ownedBlocks(id) + fresh > budget) {
+            return new Quote(probe, total, fresh, null, List.of(), after, 0,
+                    plugin.message("limit-reached", "limit", String.valueOf(budget)));
+        }
+        double hours = fresh == 0 ? 0 : plugin.pricing().priceHours(fresh);
         Claim base = null;
-        for (Claim a : adjacent) {
-            newSize += a.size();
-            if (base == null || a.created < base.created) {
-                base = a;
+        for (Claim c : owned) {
+            if (base == null || c.created < base.created) {
+                base = c;
             }
         }
-        // Settings of the merged territory: a paid protection stays on if any part had it.
-        TerritorySettings merged = base == null ? plugin.settings().defaults() : base.settings.copy();
-        for (Claim a : adjacent) {
-            if (a != base) {
-                merged.absorb(a.settings);
+        List<Claim> others = new ArrayList<>();
+        for (Claim c : owned) {
+            if (c != base) {
+                others.add(c);
             }
         }
-        // The merged territory pays for every protection any part of it had bought.
+        return new Quote(probe, total, fresh, base, others, after, hours, null);
+    }
+
+    /** The upkeep rate the territory will have after this selection is applied. */
+    public double rateAfter(Quote q) {
+        TerritorySettings merged = q.mergeBase() == null
+                ? plugin.settings().defaults().copy() : q.mergeBase().settings.copy();
+        for (Claim o : q.mergeOthers()) {
+            merged.absorb(o.settings);
+        }
         double factor = 1.0 + plugin.settings().upkeepMultiplier() * merged.purchasedPaidCount();
-        double f = newSize * perChunkMultiplier(newSize) * factor;
-        double price = plugin.getConfig().getDouble("initial-hours", 96);
+        return plugin.pricing().upkeepRate(q.blocksAfter()) * factor;
+    }
+
+    /** Charges for a quoted selection and applies it. */
+    public boolean purchase(Player p, Quote q) {
+        if (!q.ok()) {
+            plugin.sendMini(p, q.error());
+            return false;
+        }
+        if (q.newBlocks() == 0) {
+            plugin.send(p, "already-yours");
+            return false;
+        }
         long now = System.currentTimeMillis();
-        // Upkeep already banked in the territories this chunk joins.
+        Claim base = q.mergeBase();
+        // Protection factor of the territory as it will be after merging.
+        TerritorySettings merged = base == null ? plugin.settings().defaults() : base.settings.copy();
+        for (Claim other : q.mergeOthers()) {
+            merged.absorb(other.settings);
+        }
+        double factor = 1.0 + plugin.settings().upkeepMultiplier() * merged.purchasedPaidCount();
+        double baseRate = plugin.pricing().upkeepRate(q.blocksAfter());
+        double f = baseRate * factor;
+        // Upkeep already banked in the territories this selection joins.
         double carried = 0;
-        for (Claim a : adjacent) {
+        List<Claim> joined = new ArrayList<>(q.mergeOthers());
+        if (base != null) {
+            joined.add(base);
+        }
+        for (Claim a : joined) {
             long left = a.paidUntil - now;
             if (left > 0) {
                 carried += (left / (double) HOUR_MS) * rate(a);
             }
         }
-        // Hours this territory can still hold: the cap minus whatever is already carried.
         double roomHours = Math.max(0, maxPrepaidMs() / (double) HOUR_MS - carried / f);
         if (roomHours <= 0) {
             plugin.send(p, "max-prepaid");
-            return;
+            return false;
         }
-        double wantHours = Math.min(price / f, roomHours);
-        // Raw item value needed is exactly the claim price, whatever the territory size.
-        // The room ceiling stops whole-item rounding from crediting time that gets truncated.
-        PaymentService.Result r = plugin.payments().charge(p, wantHours, f,
-                plugin.payments().choiceOf(p), roomHours);
-        if (!r.ok()) {
-            plugin.sendMini(p, r.error());
-            return;
+        // Raw item value needed is the claim price; the room ceiling stops whole-item
+        // rounding from crediting more time than the territory can hold.
+        double wantHours = Math.min(q.hours() / f, roomHours);
+        if (q.hours() <= 0) {
+            wantHours = 0;
         }
-        double paidRaw = r.credited() * f;
+        double paidRaw = 0;
+        if (wantHours > 0) {
+            PaymentService.Result r = plugin.payments().charge(p, wantHours, f,
+                    plugin.payments().choiceOf(p), roomHours);
+            if (!r.ok()) {
+                plugin.sendMini(p, r.error());
+                return false;
+            }
+            paidRaw = r.credited() * f;
+        }
         double pool = paidRaw + carried;
         long remaining = Math.min((long) (pool / f * HOUR_MS), maxPrepaidMs());
 
@@ -619,11 +675,10 @@ public final class ClaimManager {
             copySettings(plugin.settings().defaults(), target.settings);
         } else {
             target = base;
-            for (Claim other : adjacent) {
-                if (other == base) {
-                    continue;
+            for (Claim other : q.mergeOthers()) {
+                for (Area a : other.areas) {
+                    target.addArea(a);
                 }
-                target.chunks.addAll(other.chunks);
                 for (var e : other.trusted.entries().entrySet()) {
                     TrustList.Level current = target.trusted.levelOf(e.getKey());
                     if (e.getValue().weight > current.weight) {
@@ -632,20 +687,40 @@ public final class ClaimManager {
                 }
                 target.created = Math.min(target.created, other.created);
                 target.settings.absorb(other.settings);
-                territories.remove(other);
+                unindexClaim(other);
             }
         }
-        target.chunks.add(key);
+        target.addArea(q.area());
         target.ownerName = p.getName();
         target.paidUntil = now + remaining;
-        register(target);
+        reindex(target);
         markDirty();
-        plugin.send(p, "claim-success", "time", Util.duration(remaining), "size", String.valueOf(target.size()));
+        plugin.send(p, "claim-success", "time", Util.duration(remaining),
+                "size", String.valueOf(target.blocks()),
+                "dims", sizeLine(target));
+        return true;
+    }
+
+    /** Kept for the chat command: claims the chunk the player stands in as a rectangle. */
+    public void claimHere(Player p) {
+        Area probe = chunkAt(p.getLocation());
+        Quote q = quote(p, probe);
+        if (!q.ok()) {
+            plugin.sendMini(p, q.error());
+            return;
+        }
+        purchase(p, q);
+    }
+
+    /** The 16x16 block rectangle of the chunk containing this location. */
+    public Area chunkAt(Location l) {
+        int x = l.getBlockX() >> 4 << 4;
+        int z = l.getBlockZ() >> 4 << 4;
+        return new Area(l.getWorld().getUID(), x, z, x + 15, z + 15);
     }
 
     /** hours <= 0 means "fill up to the maximum". Pays for the whole territory. */
-    public void payHere(Player p, ChunkKey key, double hours) {
-        Claim c = byChunk.get(key);
+    public void payHere(Player p, Claim c, double hours) {
         if (c == null) {
             plugin.send(p, "no-claim-here");
             return;
@@ -665,8 +740,6 @@ public final class ClaimManager {
         if (hours <= 0 || hours > allowedHours) {
             hours = allowedHours;
         }
-        // Pass the remaining room as a hard ceiling so whole-item rounding cannot credit
-        // more upkeep than the territory can hold, which would discard paid-for items.
         PaymentService.Result r = plugin.payments().charge(p, hours, rate(c),
                 plugin.payments().choiceOf(p), allowedHours);
         if (!r.ok()) {
@@ -684,8 +757,8 @@ public final class ClaimManager {
         plugin.send(p, "pay-success", "time", Util.duration(newUntil - now));
     }
 
-    public void unclaim(Player p, ChunkKey key) {
-        Claim c = byChunk.get(key);
+    /** Removes a whole territory. No refund, ever. */
+    public void unclaim(Player p, Claim c) {
         if (c == null) {
             plugin.send(p, "no-claim-here");
             return;
@@ -694,38 +767,46 @@ public final class ClaimManager {
             plugin.send(p, "not-your-claim");
             return;
         }
-        if (c.size() == 1) {
-            removeTerritory(c);
-            markDirty();
-            plugin.send(p, "unclaim-success");
-            return;
-        }
-        Set<ChunkKey> rest = new LinkedHashSet<>(c.chunks);
-        rest.remove(key);
-        if (!connected(rest)) {
-            plugin.send(p, "unclaim-split");
-            return;
-        }
-        long now = System.currentTimeMillis();
-        boolean active = c.paidUntil > now;
-        double pool = active ? ((c.paidUntil - now) / (double) HOUR_MS) * rate(c) : 0;
-        c.chunks.remove(key);
-        byChunk.remove(key, c);
-        if (active) {
-            long remaining = (long) (pool / rate(c) * HOUR_MS);
-            c.paidUntil = now + Math.min(remaining, maxPrepaidMs());
-        }
+        unindexClaim(c);
         markDirty();
         plugin.send(p, "unclaim-success");
     }
 
-    public void trust(Player p, ChunkKey key, UUID target, String name) {
-        trust(p, key, target, name, null);
+    /**
+     * Removes land from the player's territory, free-form. The upkeep pool is kept and the
+     * remaining time recomputed at the smaller rate, so shrinking never creates time.
+     */
+    public boolean shrink(Player p, Claim c, Area area) {
+        if (c == null || !plugin.settings().isOwnerOrAdmin(p, c)) {
+            plugin.send(p, "not-your-claim");
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        boolean active = c.paidUntil > now;
+        double pool = active ? ((c.paidUntil - now) / (double) HOUR_MS) * rate(c) : 0;
+        unindexClaim(c);
+        c.removeArea(area);
+        if (c.areas.isEmpty()) {
+            markDirty();
+            plugin.send(p, "unclaim-success");
+            return true;
+        }
+        if (active) {
+            long remaining = (long) (pool / rate(c) * HOUR_MS);
+            c.paidUntil = now + Math.min(remaining, maxPrepaidMs());
+        }
+        indexClaim(c);
+        markDirty();
+        plugin.send(p, "unclaim-success");
+        return true;
+    }
+
+    public void trust(Player p, Claim c, UUID target, String name) {
+        trust(p, c, target, name, null);
     }
 
     /** Grants (or upgrades) trust. A null level means Builder. */
-    public void trust(Player p, ChunkKey key, UUID target, String name, TrustList.Level level) {
-        Claim c = byChunk.get(key);
+    public void trust(Player p, Claim c, UUID target, String name, TrustList.Level level) {
         if (c == null || !plugin.settings().isOwnerOrAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
@@ -744,8 +825,7 @@ public final class ClaimManager {
         plugin.send(p, "trust-added", "name", name, "level", wanted.id);
     }
 
-    public void untrust(Player p, ChunkKey key, UUID target, String name) {
-        Claim c = byChunk.get(key);
+    public void untrust(Player p, Claim c, UUID target, String name) {
         if (c == null || !plugin.settings().isOwnerOrAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
@@ -766,16 +846,10 @@ public final class ClaimManager {
      *
      * <ul>
      *   <li><b>Buying</b> an unbought protection takes exactly 24 hours off the territory
-     *       clock and is refused outright when less than 24 hours remain. The purchase also
-     *       raises the upkeep cost permanently, which is why the same items buy less time
-     *       from then on. The 24 hours are the whole price: the cost rise is not also
-     *       charged against the banked time, so the clock loses 24 hours and no more.</li>
-     *   <li><b>Toggling</b> a bought protection is free: no hours are taken, none are
-     *       given back, and the upkeep cost does not move. Only whether the listeners
-     *       enforce it changes.</li>
+     *       clock and is refused outright when less than 24 hours remain.</li>
+     *   <li><b>Toggling</b> a bought protection is free: no hours taken, none given back,
+     *       and the upkeep cost does not move.</li>
      * </ul>
-     *
-     * Returns true when the change was applied.
      */
     public boolean changeFlag(Player p, Claim c, SettingsService.Flag flag, boolean enabled) {
         SettingsService svc = plugin.settings();
@@ -790,11 +864,8 @@ public final class ClaimManager {
                     "value", enabled ? "on" : "off");
             return true;
         }
-        // Buying happens once: only when switching a protection that is not owned yet ON.
-        // Everyone pays, including admins and the owner. The old admin exemption was a bug:
-        // it skipped the 24 hour deduction while setEnabled() still marked the protection as
-        // bought, so the upkeep cost rose and nothing was ever taken off the clock.
-        // A territory the server owns starts fully bought, so server claims are unaffected.
+        // Everyone pays, including admins and the owner. Server-owned territories start
+        // fully bought, so they are never charged.
         boolean buying = flag.isPaid() && enabled && !c.settings.isPurchased(flag.id);
         if (buying) {
             if (remainingMs(c) < PROTECTION_COST_MS) {
@@ -802,32 +873,25 @@ public final class ClaimManager {
                         "time", Util.duration(remainingMs(c)));
                 return false;
             }
-            // The purchase both owns the protection and switches it on, so the cost change
-            // is part of the same step.
             c.settings.markPurchased(flag.id);
             if (flag == SettingsService.Flag.PVP
                     && c.settings.pvpScope == TerritorySettings.PvpScope.EVERYONE) {
                 c.settings.pvpScope = TerritorySettings.PvpScope.NOBODY;
             }
             svc.set(c, flag, true);
-            // Take exactly 24 hours off the clock. The new higher upkeep rate is NOT
-            // re-priced into the banked time here, or the purchase would cost 24 hours plus
-            // whatever the cost rise eats. The rise already bites on every future payment,
-            // because the same items now buy less time at the higher rate.
+            // Take exactly 24 hours off the clock. The new higher rate is not re-priced
+            // into the banked time here, so the purchase costs 24 hours and no more.
             long now = System.currentTimeMillis();
             c.paidUntil = Math.max(now, c.paidUntil - PROTECTION_COST_MS);
             markDirty();
-            // One message only: it already says the protection is now on.
             plugin.send(p, "flag-purchased", "flag", flag.title, "hours", "24");
             return true;
         }
         if (flag == SettingsService.Flag.PVP && enabled
                 && c.settings.pvpScope == TerritorySettings.PvpScope.EVERYONE) {
-            // "Everyone may fight" is no protection at all, so protecting starts at "nobody".
             c.settings.pvpScope = TerritorySettings.PvpScope.NOBODY;
         }
-        // Free toggle: switch it, take nothing, give nothing back. No rebase here, because
-        // the upkeep rate is driven by ownership, which this does not change.
+        // Free toggle: switch it, take nothing, give nothing back.
         svc.set(c, flag, enabled);
         markDirty();
         plugin.send(p, "flag-changed", "flag", flag.title, "value", enabled ? "on" : "off");
@@ -837,9 +901,6 @@ public final class ClaimManager {
     /**
      * The single PvP control. EVERYONE means no protection. Any other choice protects,
      * which costs 24 hours of upkeep the first time only.
-     *
-     * Once PvP is bought, moving between scopes is free in every direction, including
-     * back to EVERYONE and in again: the purchase and its cost increase are permanent.
      */
     public boolean setPvpScope(Player p, Claim c, TerritorySettings.PvpScope scope) {
         SettingsService svc = plugin.settings();
@@ -849,7 +910,6 @@ public final class ClaimManager {
             return false;
         }
         if (scope == TerritorySettings.PvpScope.EVERYONE) {
-            // No protection at all: switch it off (free, keeps the purchase and the cost).
             if (c.settings.isEnabled(SettingsService.Flag.PVP.id)
                     && !changeFlag(p, c, SettingsService.Flag.PVP, false)) {
                 return false;
@@ -895,7 +955,7 @@ public final class ClaimManager {
             }
         }
         markDirty();
-        plugin.send(p, "flag-changed", "flag", field.name().toLowerCase(java.util.Locale.ROOT),
+        plugin.send(p, "flag-changed", "flag", field.name().toLowerCase(Locale.ROOT),
                 "value", v.isEmpty() ? "(none)" : v);
         return true;
     }
@@ -908,9 +968,6 @@ public final class ClaimManager {
     public boolean dropPaidProtections(Claim c) {
         TerritorySettings s = c.settings;
         boolean changed = false;
-        // Switch the protections off but keep them purchased, so paying upkeep restores
-        // them for free. No rebase: the upkeep cost is locked in by ownership, so dropping
-        // these must not hand the owner back any hours.
         for (SettingsService.Flag f : SettingsService.Flag.values()) {
             if (f.isPaid() && s.isEnabled(f.id)) {
                 s.setEnabled(f.id, false);
@@ -925,22 +982,46 @@ public final class ClaimManager {
 
     // ------------------------------------------------------------------- admin
 
+    /** Claims a square of server land centred on the player, in chunks (16 blocks each). */
     public void serverClaim(Player p, int radius) {
-        ChunkKey center = keyOf(p.getLocation());
-        long now = System.currentTimeMillis();
-        int count = 0;
-        for (int dx = -radius; dx <= radius; dx++) {
-            for (int dz = -radius; dz <= radius; dz++) {
-                ChunkKey k = new ChunkKey(center.world(), center.x() + dx, center.z() + dz);
-                if (byChunk.containsKey(k)) {
-                    continue;
+        Location l = p.getLocation();
+        int cx = l.getBlockX();
+        int cz = l.getBlockZ();
+        int r = Math.max(0, radius) * 16 + 15;
+        Area area = new Area(l.getWorld().getUID(), cx - r, cz - r, cx + r, cz + r);
+        List<Area> pieces = new ArrayList<>();
+        pieces.add(area);
+        // Cut away land that is already claimed, so nothing is taken from players.
+        for (Claim c : overlapping(area)) {
+            List<Area> next = new ArrayList<>();
+            for (Area piece : pieces) {
+                List<Area> rest = new ArrayList<>();
+                for (Area a : c.areas) {
+                    if (rest.isEmpty()) {
+                        rest.addAll(Area.subtract(piece, a));
+                    } else {
+                        List<Area> split = new ArrayList<>();
+                        for (Area x : rest) {
+                            split.addAll(Area.subtract(x, a));
+                        }
+                        rest = split;
+                    }
                 }
-                Claim c = new Claim(null, "Server", now, Long.MAX_VALUE);
-                c.settings.applyServerDefaults();
-                c.chunks.add(k);
-                register(c);
-                count++;
+                next.addAll(rest.isEmpty() ? List.of(piece) : rest);
             }
+            pieces = next;
+        }
+        long count = 0;
+        long now = System.currentTimeMillis();
+        for (Area piece : pieces) {
+            if (piece.blocks() <= 0) {
+                continue;
+            }
+            Claim c = new Claim(null, "Server", now, Long.MAX_VALUE);
+            c.settings.applyServerDefaults();
+            c.addArea(piece);
+            indexClaim(c);
+            count += piece.blocks();
         }
         markDirty();
         plugin.send(p, "server-claimed", "count", String.valueOf(count));
@@ -948,12 +1029,12 @@ public final class ClaimManager {
 
     /** Removes the whole territory the admin is standing in. */
     public void adminUnclaim(Player p) {
-        Claim c = byChunk.get(keyOf(p.getLocation()));
+        Claim c = at(p.getLocation());
         if (c == null) {
             plugin.send(p, "no-claim-here");
             return;
         }
-        removeTerritory(c);
+        unindexClaim(c);
         markDirty();
         plugin.send(p, "admin-unclaimed");
     }
@@ -968,8 +1049,6 @@ public final class ClaimManager {
             if (c.isServer()) {
                 continue;
             }
-            // Overdue: paid protections switch off at once (they are not being paid for).
-            // They are remembered as bought, so they can be switched back on for free.
             if (c.paidUntil < now && dropPaidProtections(c)) {
                 Player owner = Bukkit.getPlayer(c.owner);
                 if (owner != null) {
@@ -985,23 +1064,25 @@ public final class ClaimManager {
         }
         StringBuilder log = new StringBuilder();
         for (Claim c : dead) {
-            ChunkKey first = c.chunks.iterator().next();
-            removeTerritory(c);
+            Area b = c.bounds();
+            unindexClaim(c);
             log.append(Instant.now()).append(" expired owner=").append(c.ownerName)
-                    .append(" world=").append(worldName(first))
-                    .append(" chunks=").append(c.size())
-                    .append(" first=").append(first.x()).append(',').append(first.z()).append('\n');
+                    .append(" world=").append(worldName(c))
+                    .append(" blocks=").append(c.blocks())
+                    .append(" at=").append(b == null ? "?" : b.describe()).append('\n');
             Player owner = Bukkit.getPlayer(c.owner);
             if (owner != null) {
-                plugin.send(owner, "claim-expired", "x", String.valueOf(first.x()), "z", String.valueOf(first.z()),
-                        "size", String.valueOf(c.size()));
+                plugin.send(owner, "claim-expired",
+                        "x", String.valueOf(b == null ? 0 : b.minX()),
+                        "z", String.valueOf(b == null ? 0 : b.minZ()),
+                        "size", String.valueOf(c.blocks()));
             }
         }
         markDirty();
         try {
             plugin.getDataFolder().mkdirs();
-            Files.writeString(new File(plugin.getDataFolder(), "expired-claims.log").toPath(), log.toString(),
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            Files.writeString(new File(plugin.getDataFolder(), "expired-claims.log").toPath(),
+                    log.toString(), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException e) {
             plugin.getLogger().warning("Could not write expired-claims.log: " + e.getMessage());
         }

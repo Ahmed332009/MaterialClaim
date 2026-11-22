@@ -7,38 +7,63 @@ enabled-worlds: []
 # Default maximum chunks per player (all territories together). Give more with the permission materialclaim.limit.<number>
 max-claims-default: 25
 
-# Claim price per chunk, as item value in hours (96 = 8 diamonds when diamond is worth 12).
-# Every new chunk costs this, whether it starts a new territory or joins one you already own.
-initial-hours: 96
+# ---------------------------------------------------------------------------
+# CLAIM PRICING
+# Land is claimed in BLOCKS with a golden shovel. One old chunk (16x16) is 256 blocks,
+# and the default price below keeps the old economy exactly: a 256 block claim costs 96
+# hours of upkeep (8 diamonds at 12h), just like one chunk used to.
+#
+# Two modes, chosen by 'mode':
+#   flat   - price is strictly proportional to area: blocks * per-block price.
+#   tiered - the per-block price is multiplied by a factor from 'tiers', chosen by the
+#            number of blocks being claimed. Big claims can be cheaper (or dearer) per
+#            block. Edit the tier table and change mode to 'tiered' to use it.
+# ---------------------------------------------------------------------------
+claim-price:
+  mode: flat
+  # Price of one 16x16 chunk (= 256 blocks). Change this to change the whole economy.
+  per-chunk-hours: 96
+  # Never charge less than this for a brand new claim, whatever the area.
+  minimum-hours: 0
+  # Smallest and largest area a player may claim, in blocks. 0 = no limit.
+  minimum-blocks: 100
+  maximum-blocks: 0
+  # Only used when mode is 'tiered'. Sorted by up-to-blocks; the first row that fits wins.
+  # A multiplier of 1.0 means full price, 0.7 means 30% off, etc.
+  tiers:
+    - up-to-blocks: 1024
+      multiplier: 1.0
+    - up-to-blocks: 4096
+      multiplier: 0.85
+    - up-to-blocks: 16384
+      multiplier: 0.7
+    - up-to-blocks: 1000000
+      multiplier: 0.6
 
-# Nobody can bank more than this many days of upkeep on one territory.
-max-prepaid-days: 14
-
-# After upkeep ends the territory keeps protecting for this many days, then it is removed.
-grace-days: 7
-
-# How often (minutes) the plugin checks for expired claims.
-check-interval-minutes: 5
-
-# Players are warned on join when a territory has less than this many days left.
-warn-days: 3
-
-# Chunks that touch each other (sides only) become ONE territory with one payment,
-# one upkeep clock and one trust list. Set to true to also join chunks that only touch at a corner.
-# Note: with false, corner-touching chunks stay separate territories.
-connect-diagonals: false
-
-# How the upkeep rate grows with territory size.
-# A territory of n chunks drains n x multiplier chunk-hours per hour, where the multiplier
-# is chosen by n. 1.0 = every chunk costs the same. Above 1.0 = big territories pay more per chunk.
-# Example: 1-5 chunks 1.0, 6-15 chunks 1.1, 16 and more 1.25
-group-upkeep:
-  - up-to: 1000
+# How the ongoing upkeep drain scales with territory size, in BLOCKS.
+# A territory of n blocks drains (n / 256) x multiplier hours per hour before paid
+# protections. 1.0 means every block costs the same, exactly as chunks used to.
+# The first row whose up-to-blocks is at least the territory size wins.
+upkeep-tiers:
+  - up-to-blocks: 1000000
     multiplier: 1.0
+
+# Tool items. Left click sets the first corner, right click sets the second and opens the
+# price menu. The stick inspects land.
+tools:
+  claim-tool: GOLDEN_SHOVEL
+  inspect-tool: STICK
+  # Require the tool to be in the main hand (recommended: stops accidental claims).
+  require-item: true
+
+# Nobody may own more than this many blocks in total, across all territories.
+# 0 = use max-claims-default (in chunks) instead.
+max-claim-blocks: 0
 
 # Accepted items and the hours of upkeep each is worth for ONE chunk.
 # Only plain items count (renamed or enchanted items are ignored).
-# The claim price is initial-hours (96), so one chunk costs 64 copper, 32 iron,
+# The claim price is claim-price.per-chunk-hours (96 per 256 blocks), so one chunk
+# of land costs 64 copper, 32 iron,
 # 16 gold, 8 diamonds or 1 netherite ingot. A diamond is worth 12 hours.
 # Blocks are worth 9x the matching ingot.
 materials:
@@ -113,6 +138,18 @@ messages:
   already-yours: "<yellow>You already own this chunk."
   already-claimed: "<red>This chunk already belongs to {owner}."
   limit-reached: "<red>You reached your claim limit of {limit}."
+  selection-first: "<gray>First corner set at <white>{x}, {z}</white>. <gray>Right click the opposite corner."
+  selection-other-world: "<red>Both corners must be in the same world."
+  selection-too-small: "<red>That selection is too small. The minimum is <white>{min}</white> blocks."
+  selection-too-big: "<red>That selection is too big. The maximum is <white>{max}</white> blocks."
+  overlaps-other: "<red>That land is already claimed by {owner}."
+  selection-first-remove: "<gray>First corner set at <white>{x}, {z}</white>. <gray>Right click the opposite corner to remove that land."
+  shovel-remove-not-yours: "<red>You can only remove your own land."
+  shovel-unclaim-hint: "<gray>Sneak and right click a corner of your own land to remove it."
+  stick-info: "<gray>Owner: <white>{owner} <gray>| <white>{dims} <gray>| <white>{status}"
+  stick-unclaimed: "<gray>This land is <white>unclaimed<gray>."
+  stick-server: "<gray>This land is protected by the <aqua>server<gray>."
+  tools-given: "<green>Gave you a {tool}."
   claim-success: "<green>Chunk claimed. Your territory is now <white>{size}</white> chunk(s) with <white>{time}</white> of upkeep."
   unclaim-success: "<yellow>Chunk unclaimed. Upkeep is not refunded."
   no-claim-here: "<red>There is no claim here."
