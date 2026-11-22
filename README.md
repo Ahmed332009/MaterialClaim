@@ -76,7 +76,7 @@ Do not run this together with DiamondClaims for long: both use the `/claim` comm
 
 Every territory has its own settings. Open **Settings** from the main menu, or use the commands below.
 
-**Paid protections** start on (vanilla behaviour). Turning one **off** protects the territory. The first time you protect a given territory with a given protection you pay its activation fee once (**24 hours of item value** by default: 2 diamonds, 8 gold ingots or 16 iron ingots, set by `paid-protection-activation-fee`). That purchase is remembered, so you can switch that protection off and on as often as you like afterwards at no extra cost. While a protection is active it also raises the territory's upkeep by `paid-protection-upkeep-multiplier` (25% each), and that extra upkeep is taken out of your banked time straight away. If you cannot afford the fee, the protection is not switched on.
+**Paid protections** start on (vanilla behaviour). Turning one **off** protects the territory. The first time you protect a given territory with a given protection you pay its activation fee once (**24 hours of item value** by default: 2 diamonds, 4 gold ingots or 8 iron ingots, set by `paid-protection-activation-fee`). That purchase is remembered, so you can switch that protection off and on as often as you like afterwards at no extra cost. While a protection is active it also raises the territory's upkeep by `paid-protection-upkeep-multiplier` (25% each), and that extra upkeep is taken out of your banked time straight away. If you cannot afford the fee, the protection is not switched on.
 
 | Protection | What it stops |
 |---|---|

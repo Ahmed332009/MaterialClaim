@@ -9,8 +9,8 @@ applied the way it should have been. This release fixes it.
 - **The fee is charged only once per protection, per territory.** After the first
   purchase that protection is yours: turn it off and on as often as you like, at no
   extra cost. The menu shows "already bought - free to switch on" instead of a price.
-- **The fee is 24 hours of item value** (was 100), which is 2 diamonds, 8 gold ingots or
-  16 iron ingots. Change `paid-protection-activation-fee` in `config.yml` to alter it;
+- **The fee is 24 hours of item value** (was 100), which is 2 diamonds, 4 gold ingots or
+  8 iron ingots. Change `paid-protection-activation-fee` in `config.yml` to alter it;
   `0` makes protections free.
 - **The extra upkeep is now felt immediately.** Activating a protection re-prices the
   upkeep you have already banked at the new rate, so a territory with 100 hours banked

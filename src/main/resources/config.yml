@@ -78,7 +78,7 @@ territory-settings:
   # Each active paid protection adds this fraction to the territory's upkeep.
   paid-protection-upkeep-multiplier: 0.25
   # One-time fee to switch a paid protection on, in hours of item value (24 = 2 diamonds,
-  # 8 gold ingots or 16 iron ingots). Bought once per protection per territory: after that
+  # 4 gold ingots or 8 iron ingots). Bought once per protection per territory: after that
   # the owner can turn it on and off as often as they like at no extra cost. 0 = no fee.
   paid-protection-activation-fee: 24.0
   defaults:
