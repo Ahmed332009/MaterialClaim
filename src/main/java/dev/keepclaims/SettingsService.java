@@ -155,41 +155,51 @@ public final class SettingsService {
         return locked.contains(f.id);
     }
 
+    /**
+     * The state of a flag, always in the same sense for both kinds:
+     * paid protections report whether they are <b>enabled</b> (protecting), free toggles
+     * report whether the visitor action is allowed. Chat and GUI both read this, so they
+     * can never disagree.
+     */
     public boolean get(Claim c, Flag f) {
         TerritorySettings s = c.settings;
-        return switch (f) {
-            case EXPLOSIONS -> s.explosionDamage;
-            case PVP -> s.pvp;
-            case MOB_SPAWNING -> s.mobSpawning;
-            case FIRE_SPREAD -> s.fireSpread;
+        return f.isPaid() ? s.isEnabled(f.id) : switch (f) {
             case VISITOR_DOORS -> s.visitorDoors;
             case VISITOR_CONTAINERS -> s.visitorContainers;
             case VISITOR_ANIMALS -> s.visitorAnimals;
             case MOB_GRIEFING -> s.mobGriefing;
             case FLUID_FLOW -> s.fluidFlow;
             case CROP_TRAMPLE -> s.cropTrample;
+            default -> false;
         };
     }
 
+    /**
+     * Writes a flag state in the same sense as {@link #get}. Enabling a paid protection
+     * also marks it bought, because the caller has already taken payment; nothing here
+     * refunds or un-buys.
+     */
     public void set(Claim c, Flag f, boolean value) {
         TerritorySettings s = c.settings;
+        if (f.isPaid()) {
+            s.setEnabled(f.id, value);
+            return;
+        }
         switch (f) {
-            case EXPLOSIONS -> s.explosionDamage = value;
-            case PVP -> s.pvp = value;
-            case MOB_SPAWNING -> s.mobSpawning = value;
-            case FIRE_SPREAD -> s.fireSpread = value;
             case VISITOR_DOORS -> s.visitorDoors = value;
             case VISITOR_CONTAINERS -> s.visitorContainers = value;
             case VISITOR_ANIMALS -> s.visitorAnimals = value;
             case MOB_GRIEFING -> s.mobGriefing = value;
             case FLUID_FLOW -> s.fluidFlow = value;
             case CROP_TRAMPLE -> s.cropTrample = value;
+            default -> {
+            }
         }
     }
 
-    /** True when the paid protection is active (the flag is off). */
+    /** True when the paid protection is bought and switched on, so it must be enforced. */
     public boolean isProtected(Claim c, Flag f) {
-        return f.isPaid() && !get(c, f);
+        return f.isPaid() && c.settings.isProtecting(f.id);
     }
 
     // ------------------------------------------------------------- permissions

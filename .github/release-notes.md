@@ -1,19 +1,34 @@
-**Settings fixes: managers, defaults, PvP, fire, animals, crops, merging, Bedrock menus.**
+**Protections: correct on/off messages, buy once then free, and stale lore fixed.**
 
-This release fixes things in the 0.3.x settings system that did not match how it was meant to work.
+This release fixes the claim protection menu (explosions, mob spawning, fire spread and
+PvP). Nothing about claiming, upkeep or trust has changed.
 
-- **Managers can now do their job.** A manager can pay upkeep, buy and remove paid protections (paying the fee from their own inventory), and change free toggles, the territory name and the entry and leave messages. Managers can no longer add or remove trusted players: only the owner or an admin can. Managers and admins now see the Pay and Settings buttons in the menu.
-- **Safe defaults.** A new territory starts with mob griefing, fluid flow and crop trampling blocked. Server claims (spawn, shops) start fully protected: no explosions, PvP, mob spawning or fire spread. Older server claims are upgraded once when the plugin starts.
-- **PvP protection really works.** One control with four choices: everyone (no protection), visitors only, trusted only, nobody. Buying protection starts at nobody.
-- **Fire protection is real.** Fire from lava, lightning and spread is only stopped in territories that bought fire protection.
-- **Free toggles now do what they say.** Crop trampling, visitor animals and vehicles (including boats and minecarts) follow their toggles.
-- **Mob spawn protection** only stops mobs that appear on their own, not spawn eggs, commands or other plugins.
-- **Merging territories keeps every protection and purchase**, and the extra upkeep is counted correctly. New territories use the defaults from config.yml.
-- **Overdue territories lose their unpaid protections straight away** (before, it only happened at the end of the grace period).
-- **Bedrock friendly menus.** Trusted players and PvP are changed with normal taps, no shift-click.
-- **Typing "cancel"** when asked for a name or message now cancels. Entry and leave messages are plain text, so they cannot carry click events.
+- **On and off now say the right thing.** Turning a protection on printed "now off" in
+  chat, and the menu could show the opposite of the real state. A paid protection used to
+  store the inverted value (true meant "vanilla"), and that raw value was being printed.
+  Each protection now keeps the two things it needs separately: whether it has been
+  **bought**, and whether it is **switched on**. Chat and the menu read the same value, so
+  they cannot disagree with each other or with what the plugin actually blocks.
+- **Buy once, then toggle free forever.** The first time you switch a protection on you pay
+  the one-time fee and it becomes yours. After that, switching it off and on again costs
+  nothing, as often as you like. If you cannot afford the fee, nothing is charged and the
+  protection stays off and unbought.
+- **Nothing is ever refunded.** Switching a protection off keeps it bought. Unclaiming gives
+  no items back. If a territory runs out of upkeep its protections switch off but stay
+  bought, so paying upkeep brings them back for free.
+- **No more stale menu text.** The menu used to keep showing the "buy" price after you had
+  already bought a protection. The lore is now rebuilt from the bought/on state every time
+  it is drawn, so it reads Not purchased, ON (protecting), or OFF (already purchased)
+  correctly, and the "protections ON" count matches reality.
+- **The fee is exactly 24 hours of item value.** It used to be scaled by territory size and
+  could pick up the +25% per-protection upkeep multiplier, so the amount taken was not
+  clean. It is now charged once at a flat rate: 16 copper, 8 iron, 4 gold or 2 diamonds.
 
-Upgrading from 0.3.1 needs only the new jar. Territories already saved keep their current toggle values: open Settings and switch mob griefing, fluid flow and crop trampling to Blocked if you want the safe setting.
+Your existing territories are upgraded automatically on first load: a protection that was
+switched on and protecting before is kept on and marked as already bought, so you are not
+charged a second time for something you were already paying for. Anything that was off
+shows as not purchased and can be bought normally. No config edit is needed.
 
-- Chest menu works on Java and Bedrock (Geyser).
-- Needs Paper 1.21.1+ and Java 21+. These settings have not been tested on a live server yet: please open an issue if something misbehaves.
+- Chest menu works on Java and Bedrock (Geyser). Protection settings use normal taps only.
+- Needs Paper 1.21.1+ and Java 21+. These settings have not been tested on a live server yet:
+  please open an issue if something misbehaves.

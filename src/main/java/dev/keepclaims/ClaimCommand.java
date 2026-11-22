@@ -176,7 +176,9 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
         if (c == null) {
             return;
         }
-        plugin.claims().changeFlag(p, c, flag, on);
+        if (plugin.claims().changeFlag(p, c, flag, on)) {
+            plugin.claims().saveNow();
+        }
     }
 
     /** everyone, visitors, trusted or nobody. Returns null for anything else. */
@@ -220,14 +222,17 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
         plugin.sendMini(p, "<gray>Settings for <white>" + plugin.escape(c.displayName())
                 + "<gray> (" + c.size() + " chunks)");
         for (SettingsService.Flag f : SettingsService.Flag.values()) {
+            // get() reports "enabled/protecting" for paid flags and "allowed" for free
+            // toggles, so this reads the same way as the GUI.
             boolean value = svc.get(c, f);
             String shown = f.isPaid()
-                    ? (value ? "<yellow>off<gray> (vanilla)" : "<green>ON<gray> (protected)")
+                    ? (value ? "<green>ON<gray> (protecting)" : "<yellow>OFF<gray> (vanilla)")
                     : (value ? "<green>on" : "<red>off");
             if (f.isPaid()) {
                 shown += c.settings.isPurchased(f.id)
-                        ? " <dark_gray>[bought, free to toggle]"
-                        : " <dark_gray>[fee " + Util.trim(svc.activationFeeFor(c)) + "h once]";
+                        ? " <dark_gray>[purchased, free to toggle]"
+                        : " <dark_gray>[not bought - fee "
+                          + Util.trim(svc.activationFeeFor(c)) + "h once]";
             }
             plugin.sendMini(p, "<gray>- <white>" + f.id + "<gray>: " + shown);
         }

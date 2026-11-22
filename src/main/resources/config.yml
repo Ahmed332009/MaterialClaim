@@ -69,9 +69,14 @@ public-blocks:
 
 # Per-territory settings.
 #
-# Paid protections start ON (true = vanilla behaviour still happens). Turning one OFF
-# protects the territory and costs the owner: a one-time activation fee, plus a permanent
-# percentage increase in that territory's upkeep every cycle.
+# Each paid protection is bought ONCE with items (paid-protection-activation-fee, 24 hours
+# of item value) and is then free to switch on and off forever. While it is switched ON it
+# protects the territory and adds a percentage increase to upkeep every cycle. Nothing is
+# ever refunded, not when you switch it off and not when you unclaim.
+#
+# In the defaults below, true still means vanilla behaviour (the protection is off), so the
+# shipped defaults start every territory with no paid protection. A brand new territory is
+# created from these defaults with nothing purchased.
 #
 # Free toggles never cost anything. true = visitors are allowed to do that thing.
 territory-settings:

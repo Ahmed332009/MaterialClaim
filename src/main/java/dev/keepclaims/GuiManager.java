@@ -473,7 +473,7 @@ public final class GuiManager implements Listener {
             plugin.send(p, "no-claim-here");
             return;
         }
-        if (!c.isManager(p.getUniqueId()) && !p.hasPermission("materialclaim.admin")) {
+        if (!svc.canManage(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
@@ -483,13 +483,13 @@ public final class GuiManager implements Listener {
         List<String> head = new ArrayList<>();
         head.add("<gray>Territory: <white>" + esc(c.displayName()));
         head.add("<gray>Chunks: <white>" + c.size());
-        head.add("<gray>Paid protections active: <white>" + c.settings.activePaidCount());
+        head.add("<gray>Paid protections ON: <white>" + c.settings.activePaidCount() + "<gray> of 4");
         head.add("<gray>Upkeep rate: <white>" + trim(cm.rate(c)) + " chunk-hours/h");
         set(inv, h, 4, item(Material.PAPER, "<gold>Settings", head), null);
 
         set(inv, h, 0, item(Material.RED_STAINED_GLASS_PANE, "<dark_red>Paid protections",
-                "<gray>Start on. Turning one off protects the territory",
-                "<gray>and adds upkeep every cycle."), null);
+                "<gray>Buy once with items, then toggle for free.",
+                "<gray>While ON, each one adds extra upkeep every cycle."), null);
 
         int slot = 9;
         for (SettingsService.Flag f : new SettingsService.Flag[]{
@@ -525,74 +525,84 @@ public final class GuiManager implements Listener {
         p.openInventory(inv);
     }
 
+    /**
+     * One paid protection button. The lore is rebuilt from scratch on every render and is
+     * driven only by (purchased, enabled), so it can never show a stale buy prompt or an
+     * outdated status after a click.
+     */
     private ItemStack paidItem(Player p, Claim c, SettingsService.Flag f) {
         SettingsService svc = plugin.settings();
-        boolean vanilla = svc.get(c, f);
+        boolean owned = c.settings.isPurchased(f.id);
+        boolean on = c.settings.isEnabled(f.id);
         boolean locked = svc.isLocked(f) && !p.hasPermission("materialclaim.admin");
-        Material icon = vanilla ? Material.LIME_DYE
-                : locked ? Material.BARRIER : Material.RED_DYE;
+
+        Material icon = locked ? Material.BARRIER : on ? Material.RED_DYE : Material.LIME_DYE;
         List<String> lore = new ArrayList<>();
         lore.add("<gray>" + f.description);
         lore.add("");
-        if (vanilla) {
-            lore.add("<gray>Status: <yellow>Off (vanilla behaviour)");
-            lore.add("<gray>Turn on to protect this territory.");
-            if (c.settings.isPurchased(f.id)) {
-                lore.add("<gray>Fee: <green>already bought <gray>- free to switch on");
-            } else if (svc.activationFee() <= 0) {
-                lore.add("<gray>Fee: <green>free");
+        if (!owned) {
+            lore.add("<gray>Status: <yellow>Not purchased <gray>(off - vanilla behaviour)");
+            if (svc.activationFee() <= 0) {
+                lore.add("<gray>Cost: <green>free");
             } else {
-                lore.add("<gray>Fee: <white>" + trim(svc.activationFee())
-                        + " hours of items <gray>(one-time)");
+                lore.add("<gray>Cost: <white>" + trim(svc.activationFee())
+                        + " hours of upkeep items <gray>(one-time)");
             }
             lore.add("<gray>Extra upkeep: <white>+" + Math.round(svc.upkeepMultiplier() * 100)
                     + "% per cycle");
-            lore.add("<yellow>Click to protect");
-        } else {
+            lore.add("<yellow>Click to purchase and enable");
+        } else if (on) {
             lore.add("<gray>Status: <green>ON (protecting)");
-            lore.add("<gray>Extra upkeep already included.");
-            lore.add("<gray>Switching it off is free and keeps the purchase.");
-            lore.add("<yellow>Click to turn protection off");
-        }
-        if (f == SettingsService.Flag.PVP) {
-            lore.add("<gray>PvP scope: <white>" + c.settings.pvpScope.label());
-            lore.add("<yellow>Shift-click for scope options");
+            lore.add("<gray>Purchased <gray>(free to toggle, non-refundable)");
+            lore.add("<gray>Extra upkeep: <white>+" + Math.round(svc.upkeepMultiplier() * 100)
+                    + "% per cycle");
+            lore.add("<yellow>Click to turn OFF");
+        } else {
+            lore.add("<gray>Status: <yellow>OFF <gray>(vanilla behaviour)");
+            lore.add("<gray>Purchased <gray>(free to toggle, non-refundable)");
+            lore.add("<yellow>Click to turn ON");
         }
         if (locked) {
             lore.add("<red>Locked by the server admin.");
         }
-        return item(icon, (vanilla ? "<red>" : "<green>") + f.title, lore);
+        return item(icon, (on ? "<green>" : "<white>") + f.title, lore);
     }
 
     /** The PvP button: choose who may fight. Everyone means no protection. */
     private ItemStack pvpItem(Player p, Claim c) {
         SettingsService svc = plugin.settings();
         SettingsService.Flag f = SettingsService.Flag.PVP;
-        boolean active = !c.settings.pvp;
+        boolean owned = c.settings.isPurchased(f.id);
+        boolean on = c.settings.isEnabled(f.id);
         boolean locked = svc.isLocked(f) && !p.hasPermission("materialclaim.admin");
+
         List<String> lore = new ArrayList<>();
         lore.add("<gray>" + f.description);
         lore.add("");
-        if (active) {
-            lore.add("<gray>Status: <green>Protected <gray>- may fight: <white>" + c.settings.pvpScope.label());
-            lore.add("<gray>Extra upkeep already included.");
-        } else {
-            lore.add("<gray>Status: <yellow>Everyone may fight <gray>(no protection)");
-            if (c.settings.isPurchased(f.id)) {
-                lore.add("<gray>Fee: <green>already bought <gray>- free to switch on");
-            } else if (svc.activationFee() <= 0) {
-                lore.add("<gray>Fee: <green>free");
+        if (!owned) {
+            lore.add("<gray>Status: <yellow>Not purchased <gray>(everyone may fight)");
+            if (svc.activationFee() <= 0) {
+                lore.add("<gray>Cost: <green>free");
             } else {
-                lore.add("<gray>Fee: <white>" + trim(svc.activationFee()) + " hours of items <gray>(one-time)");
+                lore.add("<gray>Cost: <white>" + trim(svc.activationFee())
+                        + " hours of upkeep items <gray>(one-time)");
             }
-            lore.add("<gray>Extra upkeep: <white>+" + Math.round(svc.upkeepMultiplier() * 100) + "% per cycle");
+            lore.add("<gray>Extra upkeep: <white>+" + Math.round(svc.upkeepMultiplier() * 100)
+                    + "% per cycle");
+        } else if (on) {
+            lore.add("<gray>Status: <green>ON (protecting) <gray>- may fight: <white>"
+                    + c.settings.pvpScope.label());
+            lore.add("<gray>Purchased <gray>(free to toggle, non-refundable)");
+        } else {
+            lore.add("<gray>Status: <yellow>OFF <gray>(everyone may fight)");
+            lore.add("<gray>Purchased <gray>(free to toggle, non-refundable)");
         }
         lore.add("<yellow>Click to choose who may fight");
         if (locked) {
             lore.add("<red>Locked by the server admin.");
         }
-        return item(active ? Material.RED_DYE : Material.LIME_DYE,
-                (active ? "<green>" : "<red>") + f.title, lore);
+        return item(on ? Material.RED_DYE : Material.LIME_DYE,
+                (on ? "<green>" : "<white>") + f.title, lore);
     }
 
     private ItemStack freeItem(Player p, Claim c, SettingsService.Flag f) {
@@ -617,21 +627,23 @@ public final class GuiManager implements Listener {
             plugin.send(p, "no-claim-here");
             return;
         }
-        if (!c.isManager(p.getUniqueId()) && !p.hasPermission("materialclaim.admin")) {
+        if (!plugin.settings().canManage(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
         MenuHolder h = new MenuHolder(Type.PVP_SCOPE, key);
         Inventory inv = create(h, 27, "<dark_green><bold>PvP scope");
+        boolean pvpOn = c.settings.isEnabled(SettingsService.Flag.PVP.id);
         set(inv, h, 4, item(Material.IRON_SWORD, "<gold>Who may PvP here",
                 "<gray>Everyone = no protection (free).",
                 "<gray>Anything else turns PvP protection on.",
-                "<gray>Current: <white>" + (c.settings.pvp ? "everyone" : c.settings.pvpScope.label())), null);
+                "<gray>Current: <white>"
+                        + (pvpOn ? c.settings.pvpScope.label() : "everyone (no protection)")), null);
         int slot = 10;
         for (TerritorySettings.PvpScope scope : TerritorySettings.PvpScope.values()) {
             boolean cur = scope == TerritorySettings.PvpScope.EVERYONE
-                    ? c.settings.pvp
-                    : !c.settings.pvp && c.settings.pvpScope == scope;
+                    ? !pvpOn
+                    : pvpOn && c.settings.pvpScope == scope;
             String name = scope == TerritorySettings.PvpScope.EVERYONE ? "everyone (no protection)" : scope.label();
             set(inv, h, slot++, item(cur ? Material.LIME_DYE : Material.GRAY_DYE,
                     (cur ? "<green>" : "<white>") + name,
@@ -818,8 +830,13 @@ public final class GuiManager implements Listener {
                 if (c == null) {
                     return;
                 }
-                boolean newValue = !plugin.settings().get(c, flag);
-                cm.changeFlag(p, c, flag, newValue);
+                // State first: flip the authoritative value, then persist it right away.
+                // changeFlag() charges the one-time fee if needed and reports exactly this
+                // same boolean, so chat and the re-rendered menu always agree.
+                boolean newState = !plugin.settings().get(c, flag);
+                if (cm.changeFlag(p, c, flag, newState)) {
+                    cm.saveNow();
+                }
                 later(() -> openSettings(p, key));
             }
             case "scope" -> {
@@ -827,7 +844,9 @@ public final class GuiManager implements Listener {
                 if (c == null) {
                     return;
                 }
-                cm.setPvpScope(p, c, TerritorySettings.PvpScope.parse(arg));
+                if (cm.setPvpScope(p, c, TerritorySettings.PvpScope.parse(arg))) {
+                    cm.saveNow();
+                }
                 later(() -> openPvpScope(p, key));
             }
             case "text" -> {

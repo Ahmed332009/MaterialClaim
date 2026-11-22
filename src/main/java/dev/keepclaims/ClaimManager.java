@@ -126,19 +126,20 @@ public final class ClaimManager {
 
     /** Copies every setting from src into dst (used when a claim gains defaults). */
     static void copySettings(TerritorySettings src, TerritorySettings dst) {
-        dst.explosionDamage = src.explosionDamage;
-        dst.pvp = src.pvp;
-        dst.mobSpawning = src.mobSpawning;
-        dst.fireSpread = src.fireSpread;
-        dst.visitorDoors = src.visitorDoors;
-        dst.visitorContainers = src.visitorContainers;
-        dst.visitorAnimals = src.visitorAnimals;
-        dst.mobGriefing = src.mobGriefing;
-        dst.fluidFlow = src.fluidFlow;
-        dst.cropTrample = src.cropTrample;
-        dst.pvpScope = src.pvpScope;
+        TerritorySettings c = src.copy();
+        dst.setEnabled("explosions", c.isEnabled("explosions"));
+        dst.setEnabled("pvp", c.isEnabled("pvp"));
+        dst.setEnabled("mob-spawning", c.isEnabled("mob-spawning"));
+        dst.setEnabled("fire-spread", c.isEnabled("fire-spread"));
+        dst.visitorDoors = c.visitorDoors;
+        dst.visitorContainers = c.visitorContainers;
+        dst.visitorAnimals = c.visitorAnimals;
+        dst.mobGriefing = c.mobGriefing;
+        dst.fluidFlow = c.fluidFlow;
+        dst.cropTrample = c.cropTrample;
+        dst.pvpScope = c.pvpScope;
         dst.purchased.clear();
-        dst.purchased.addAll(src.purchased);
+        dst.purchased.addAll(c.purchased);
     }
 
     public int ownedChunks(UUID owner) {
@@ -531,11 +532,12 @@ public final class ClaimManager {
         }
         long left = remainingMs(c);
         if (left > 0) {
-            return "<green>Active <gray>- <white>" + Util.duration(left) + " <gray>left";
+            // timeLeft() formats (expiry - now) in epoch milliseconds; no tick/second mix.
+            return "<green>Active <gray>- <white>" + Util.timeLeft(c.paidUntil) + " <gray>left";
         }
-        long graceLeft = c.paidUntil + graceMs() - System.currentTimeMillis();
-        if (graceLeft > 0) {
-            return "<red>Overdue <gray>- removed in <white>" + Util.duration(graceLeft);
+        if (c.paidUntil + graceMs() > System.currentTimeMillis()) {
+            return "<red>Overdue <gray>- removed in <white>"
+                    + Util.timeLeft(c.paidUntil + graceMs());
         }
         return "<dark_red>Expired";
     }
@@ -775,40 +777,47 @@ public final class ClaimManager {
     }
 
     /**
-     * Applies a flag change, charging for it when needed.
+     * Applies a flag change, charging for it the first time only.
      *
-     * Switching a paid protection ON (protecting the territory) charges the activation
-     * fee the first time only; afterwards the purchase is remembered and the protection
-     * can be toggled freely. Every activation also raises the upkeep rate, which is
-     * applied to the banked time immediately. Admins never pay.
+     * This is the one place that decides between "buy" and "free toggle", and the one
+     * place that reports the resulting state, so chat and GUI cannot disagree:
+     *
+     * <ul>
+     *   <li>Not bought yet, and the request turns it ON: charge the one-time fee, then
+     *       set purchased and enabled. If the player cannot pay, nothing changes.</li>
+     *   <li>Already bought: no charge ever again, just flip enabled.</li>
+     *   <li>Turning it OFF never refunds anything and keeps the purchase.</li>
+     * </ul>
      *
      * Returns true when the change was applied.
      */
-    public boolean changeFlag(Player p, Claim c, SettingsService.Flag flag, boolean value) {
+    public boolean changeFlag(Player p, Claim c, SettingsService.Flag flag, boolean enabled) {
         SettingsService svc = plugin.settings();
         String refuse = svc.refusal(p, c, flag);
         if (refuse != null) {
             plugin.sendMini(p, refuse);
             return false;
         }
-        if (svc.get(c, flag) == value) {
+        boolean current = svc.get(c, flag);
+        if (current == enabled) {
             plugin.send(p, "flag-unchanged", "flag", flag.title,
-                    "value", value ? "on" : "off");
+                    "value", enabled ? "on" : "off");
             return true;
         }
         boolean admin = svc.roleOf(p, c) == SettingsService.Role.ADMIN;
-        // The activation fee is a one-time purchase: it is charged the first time this
-        // protection is switched on, and never again for this territory.
-        boolean feeDue = flag.isPaid() && !value && !admin
+        // The fee is a one-time purchase, charged only when switching a still-unbought
+        // protection ON. Toggling it off, or toggling it on again later, is free.
+        boolean feeDue = flag.isPaid() && enabled && !admin
                 && !c.settings.isPurchased(flag.id)
                 && svc.activationFeeFor(c) > 0;
         if (feeDue) {
             double fee = svc.activationFeeFor(c);
             // Item values are worth N hours for one chunk at multiplier 1.0, so charging
-            // at 1.0 makes the fee a flat 24 hours of item value whatever the size.
+            // at 1.0 makes the fee exactly 24 hours of item value whatever the size.
             PaymentService.Result r = plugin.payments().charge(p, fee, 1.0,
                     plugin.payments().choiceOf(p));
             if (!r.ok()) {
+                // Leave it untouched: still not bought, still off.
                 plugin.send(p, "flag-cannot-afford", "flag", flag.title);
                 plugin.sendMini(p, r.error());
                 return false;
@@ -817,18 +826,18 @@ public final class ClaimManager {
             plugin.send(p, "flag-purchased", "flag", flag.title,
                     "fee", Util.trim(fee));
         }
-        if (flag == SettingsService.Flag.PVP && !value
+        if (flag == SettingsService.Flag.PVP && enabled
                 && c.settings.pvpScope == TerritorySettings.PvpScope.EVERYONE) {
             // "Everyone may fight" is no protection at all, so protecting starts at "nobody".
             c.settings.pvpScope = TerritorySettings.PvpScope.NOBODY;
         }
         double oldRate = rate(c);
-        svc.set(c, flag, value);
+        svc.set(c, flag, enabled);
         // Price the already-banked upkeep at the new rate, so the extra upkeep is felt
         // immediately instead of only on the next payment.
         rebasePaidUntil(c, oldRate);
         markDirty();
-        plugin.send(p, "flag-changed", "flag", flag.title, "value", value ? "on" : "off");
+        plugin.send(p, "flag-changed", "flag", flag.title, "value", enabled ? "on" : "off");
         return true;
     }
 
@@ -845,14 +854,18 @@ public final class ClaimManager {
             return false;
         }
         if (scope == TerritorySettings.PvpScope.EVERYONE) {
-            if (!c.settings.pvp && !changeFlag(p, c, SettingsService.Flag.PVP, true)) {
+            // No protection at all: switch it off (free, keeps the purchase).
+            if (c.settings.isEnabled(SettingsService.Flag.PVP.id)
+                    && !changeFlag(p, c, SettingsService.Flag.PVP, false)) {
                 return false;
             }
             c.settings.pvpScope = TerritorySettings.PvpScope.EVERYONE;
         } else {
+            // Any other choice protects, which charges the one-time fee if it is unbought.
             TerritorySettings.PvpScope previous = c.settings.pvpScope;
             c.settings.pvpScope = scope;
-            if (c.settings.pvp && !changeFlag(p, c, SettingsService.Flag.PVP, false)) {
+            if (!c.settings.isEnabled(SettingsService.Flag.PVP.id)
+                    && !changeFlag(p, c, SettingsService.Flag.PVP, true)) {
                 c.settings.pvpScope = previous;
                 return false;
             }
@@ -902,10 +915,14 @@ public final class ClaimManager {
         TerritorySettings s = c.settings;
         double oldRate = rate(c);
         boolean changed = false;
-        if (!s.explosionDamage) { s.explosionDamage = true; changed = true; }
-        if (!s.pvp) { s.pvp = true; changed = true; }
-        if (!s.mobSpawning) { s.mobSpawning = true; changed = true; }
-        if (!s.fireSpread) { s.fireSpread = true; changed = true; }
+        // Switch the protections off but keep them purchased, so paying upkeep restores
+        // them for free. Nothing is refunded.
+        for (SettingsService.Flag f : SettingsService.Flag.values()) {
+            if (f.isPaid() && s.isEnabled(f.id)) {
+                s.setEnabled(f.id, false);
+                changed = true;
+            }
+        }
         if (changed) {
             // Protections are gone, so the owner should stop being charged for them.
             rebasePaidUntil(c, oldRate);
