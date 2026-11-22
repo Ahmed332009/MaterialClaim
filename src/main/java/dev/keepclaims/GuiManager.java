@@ -342,7 +342,7 @@ public final class GuiManager implements Listener {
         MenuHolder h = new MenuHolder(Type.TRUST_LIST, key);
         Inventory inv = create(h, 54, "<dark_green><bold>Trusted players");
         int slot = 0;
-        for (UUID id : c.trusted) {
+        for (UUID id : c.trusted.ids()) {
             if (slot >= 45) {
                 break;
             }

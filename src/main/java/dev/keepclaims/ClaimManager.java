@@ -291,8 +291,8 @@ public final class ClaimManager {
                     pool += Math.max(0, o.paid - now) / (double) HOUR_MS;
                     created = Math.min(created, o.created);
                     latestPaid = Math.max(latestPaid, o.paid);
-                    for (var e : o.trusted.entries().entrySet()) {
-                        c.trusted.set(e.getKey(), e.getValue());
+                    for (var te : o.trusted.entries().entrySet()) {
+                        c.trusted.set(te.getKey(), te.getValue());
                     }
                     c.chunks.add(o.key);
                 }
@@ -697,14 +697,14 @@ public final class ClaimManager {
             plugin.send(p, "trust-self");
             return;
         }
-        TrustList.Level level = level == null ? TrustList.Level.BUILDER : level;
-        TrustList.Level prev = c.trusted.set(target, level);
-        if (prev == level) {
+        TrustList.Level wanted = level == null ? TrustList.Level.BUILDER : level;
+        TrustList.Level prev = c.trusted.set(target, wanted);
+        if (prev == wanted) {
             plugin.send(p, "already-trusted", "name", name);
             return;
         }
         markDirty();
-        plugin.send(p, "trust-added", "name", name, "level", level.id);
+        plugin.send(p, "trust-added", "name", name, "level", wanted.id);
     }
 
     public void untrust(Player p, ChunkKey key, UUID target, String name) {

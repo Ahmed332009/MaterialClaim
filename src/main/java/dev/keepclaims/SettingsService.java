@@ -247,7 +247,7 @@ public final class SettingsService {
         return s.toMap();
     }
 
-    public void readInto(TerritorySettings s, YamlConfiguration y, String path) {
-        s.readSection(y.getConfigurationSection(path));
+    public void readInto(TerritorySettings s, org.bukkit.configuration.ConfigurationSection sec) {
+        s.readSection(sec);
     }
 }

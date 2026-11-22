@@ -460,7 +460,9 @@ public final class ProtectionListener implements Listener {
     /** Hostile mobs may not spawn inside a territory that has MOB_SPAWNING protection. */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onCreatureSpawn(CreatureSpawnEvent e) {
-        if (!e.getEntityType().getCategory().isHostile()) {
+        if (!(e.getEntity() instanceof org.bukkit.entity.Monster)
+                && !(e.getEntity() instanceof org.bukkit.entity.Slime)
+                && !(e.getEntity() instanceof org.bukkit.entity.Phantom)) {
             return;
         }
         if (protectedBy(claims.at(e.getLocation()), SettingsService.Flag.MOB_SPAWNING)) {
