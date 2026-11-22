@@ -72,6 +72,42 @@ Do not run this together with DiamondClaims for long: both use the `/claim` comm
 | `max-claims-default` | 25 | Total chunks per player (`materialclaim.limit.<n>` raises it) |
 | `materials` | see above | Accepted items and their value in hours |
 
+## Territory settings
+
+Every territory has its own settings. Open **Settings** from the main menu, or use the commands below.
+
+**Paid protections** start on (vanilla behaviour). Turning one **off** protects the territory and costs the owner: a one-time activation fee plus a permanent increase in that territory's upkeep. Turning it back on again is free.
+
+| Protection | What it stops |
+|---|---|
+| Explosion Damage | TNT, creeper and wither block damage |
+| PvP | Player vs player combat (with a scope: everyone, visitors, trusted, nobody) |
+| Mob Spawning | Hostile mobs spawning inside the territory |
+| Fire Spread | Fire spreading to or from territory blocks |
+
+**Free toggles** cost nothing. Managers may change these too.
+
+| Toggle | Meaning |
+|---|---|
+| Visitor Doors | Visitors may use doors, buttons and levers |
+| Visitor Containers | Visitors may open chests, barrels and similar |
+| Visitor Animals | Visitors may harm, leash or ride animals and vehicles |
+| Mob Griefing | Endermen, withers and similar may break blocks |
+| Fluid Flow | Fluids from neighbouring chunks may flow in |
+| Crop Trampling | Visitors may trample crops |
+
+Also available: a custom **territory name**, and **entry / leave messages** (`{territory}` and `{player}` placeholders).
+
+### Trust levels
+
+| Level | Can do |
+|---|---|
+| Visitor | Subject to the free-toggle rules only |
+| Builder | Place and break blocks |
+| Manager | Build, plus change free toggles and pay upkeep |
+
+Only the owner (or an admin) can change paid protections.
+
 ## Commands
 
 | Command | Description |
@@ -85,6 +121,13 @@ Do not run this together with DiamondClaims for long: both use the `/claim` comm
 | `/claims borders` | Show the territory border with particles |
 | `/claims trust <player>` | Trust a player in this territory |
 | `/claims untrust <player>` | Remove trust |
+| `/claims flag <flag> <value> [territory]` | Change one setting |
+| `/claims flags [territory]` | List every setting for a territory |
+
+`<value>` is `on`/`off` for toggles, `everyone`/`visitors`/`trusted`/`nobody` for
+`pvp-scope`, and free text for `name`, `entry-message` and `leave-message`. The optional
+`[territory]` accepts a territory name, an owner name, or an `x,z` chunk id; without it
+the chunk you are standing in is used.
 
 ## Admin
 
@@ -95,7 +138,16 @@ Do not run this together with DiamondClaims for long: both use the `/claim` comm
 | `/claims admin unclaim` | Remove the territory you are standing in |
 | `/claims admin reload` | Reload `config.yml` |
 
-Permissions: `materialclaim.use`, `materialclaim.admin`, and `materialclaim.limit.<n>`.
+Permissions:
+
+| Permission | Default | Meaning |
+|---|---|---|
+| `materialclaim.use` | everyone | Use `/claims` and the menu |
+| `materialclaim.limit.<n>` | — | Raises a player's total chunk limit |
+| `materialclaim.flags` | everyone | Change free toggles on your own territory |
+| `materialclaim.flags.paid` | everyone | Change paid protections on your own territory |
+| `materialclaim.flags.any` | op | Change any setting on any territory |
+| `materialclaim.admin` | op | Full admin override |
 
 ## Building from source
 
