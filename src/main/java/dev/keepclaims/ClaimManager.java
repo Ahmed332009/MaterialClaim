@@ -94,7 +94,7 @@ public final class ClaimManager {
     }
 
     private long maxPrepaidMs() {
-        return (long) (plugin.getConfig().getDouble("max-prepaid-days", 30) * DAY_MS);
+        return (long) (plugin.getConfig().getDouble("max-prepaid-days", 14) * DAY_MS);
     }
 
     public boolean worldEnabled(World w) {

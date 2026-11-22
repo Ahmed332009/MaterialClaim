@@ -5,6 +5,7 @@ on:
     branches: ['**']
     tags: ['v*']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -53,7 +54,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          JAR=$(ls build/libs/*.jar | head -n 1)
+          # Only the plugin jar, never a -plain / -sources / -javadoc jar.
+          JAR=$(ls build/libs/*.jar | grep -v -e '-plain' -e '-sources' -e '-javadoc' | head -n 1)
+          echo "Publishing $JAR"
           gh release create "$GITHUB_REF_NAME" "$JAR" \
-            --title "MaterialClaim $GITHUB_REF_NAME" \
-            --generate-notes
+            --title "MaterialClaim ${GITHUB_REF_NAME#v}" \
+            --notes-file .github/release-notes.md

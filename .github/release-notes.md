@@ -1,0 +1,6 @@
+- Land claims paid with items instead of money: copper, iron, gold, diamond, netherite.
+- Connected chunks work as one territory: one payment, one upkeep clock, one trust list.
+- Claim price 96 hours of items (64 copper, 32 iron, 16 gold, 8 diamonds or 1 netherite ingot). Upkeep scales with territory size through the `group-upkeep` setting.
+- Claims run out, get a 7 day grace period, then are removed.
+- Chest menu works on Java and Bedrock (Geyser).
+- Needs Paper 1.21.1+ and Java 21+. Territories are new in this version and may still have bugs: please open an issue.

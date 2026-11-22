@@ -36,20 +36,22 @@ group-upkeep:
   - up-to: 1000
     multiplier: 1.0
 
-# Accepted items and the hours of upkeep each is worth at multiplier 1.0.
+# Accepted items and the hours of upkeep each is worth for ONE chunk.
 # Only plain items count (renamed or enchanted items are ignored).
-# Keep farmable items (iron, gold, copper) low, and anchor on diamond and netherite.
+# The claim price is initial-hours (96), so one chunk costs 64 copper, 32 iron,
+# 16 gold, 8 diamonds or 1 netherite ingot. A diamond is worth 12 hours.
+# Blocks are worth 9x the matching ingot.
 materials:
-  COPPER_INGOT: 0.25
-  COPPER_BLOCK: 2.25
-  IRON_INGOT: 0.5
-  IRON_BLOCK: 4.5
-  GOLD_INGOT: 1
-  GOLD_BLOCK: 9
+  COPPER_INGOT: 1.5
+  COPPER_BLOCK: 13.5
+  IRON_INGOT: 3
+  IRON_BLOCK: 27
+  GOLD_INGOT: 6
+  GOLD_BLOCK: 54
   DIAMOND: 12
   DIAMOND_BLOCK: 108
-  NETHERITE_INGOT: 48
-  NETHERITE_BLOCK: 432
+  NETHERITE_INGOT: 96
+  NETHERITE_BLOCK: 864
 
 # Blocks anyone may still use inside other players' claims.
 public-blocks:
