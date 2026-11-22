@@ -767,8 +767,13 @@ public final class ClaimManager {
     public boolean setText(Player p, Claim c, SettingsService.TextInput field, String value) {
         SettingsService svc = plugin.settings();
         SettingsService.Role role = svc.roleOf(p, c);
-        if (role != SettingsService.Role.ADMIN && role != SettingsService.Role.OWNER) {
+        boolean admin = role == SettingsService.Role.ADMIN;
+        if (!admin && role != SettingsService.Role.OWNER) {
             plugin.send(p, "not-your-claim");
+            return false;
+        }
+        if (!admin && !p.hasPermission("materialclaim.flags")) {
+            plugin.send(p, "no-permission");
             return false;
         }
         String v = value == null ? "" : value.trim();

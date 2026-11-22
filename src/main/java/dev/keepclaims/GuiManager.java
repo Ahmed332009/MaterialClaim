@@ -322,7 +322,9 @@ public final class GuiManager implements Listener {
             if (slot >= 45) {
                 break;
             }
-            set(inv, h, slot++, head(o, "<green>" + esc(o.getName()), "<gray>Click to let them build here"),
+            set(inv, h, slot++, head(o, "<green>" + esc(o.getName()),
+                    "<gray>Click to trust as Builder",
+                    "<gray>They can build and break blocks."),
                     "trust:" + o.getUniqueId());
         }
         set(inv, h, 45, item(Material.ARROW, "<yellow>Back"), "main");
@@ -346,8 +348,14 @@ public final class GuiManager implements Listener {
             if (slot >= 45) {
                 break;
             }
-            set(inv, h, slot++, head(Bukkit.getOfflinePlayer(id), "<green>" + esc(nameOf(id)),
-                    "<red>Click to remove"), "untrust:" + id);
+            TrustList.Level level = c.trusted.levelOf(id);
+            set(inv, h, slot++, head(Bukkit.getOfflinePlayer(id),
+                    "<green>" + esc(nameOf(id)),
+                    "<gray>Level: <white>" + level.id,
+                    "<gray>Builder: build and break.",
+                    "<gray>Manager: also pay upkeep and free toggles.",
+                    "<yellow>Click to change level",
+                    "<red>Shift-click to remove"), "level:" + id);
         }
         set(inv, h, 49, item(Material.ARROW, "<yellow>Back"), "trust_menu");
         fillEmpty(inv);
@@ -657,6 +665,28 @@ public final class GuiManager implements Listener {
                 UUID id = UUID.fromString(arg);
                 cm.trust(p, key, id, nameOf(id));
                 later(() -> openTrustAdd(p, key));
+            }
+            case "level" -> {
+                Claim c = cm.get(key);
+                if (c == null || !c.isManager(p.getUniqueId())) {
+                    plugin.send(p, "not-your-claim");
+                    return;
+                }
+                UUID id;
+                try {
+                    id = UUID.fromString(arg);
+                } catch (IllegalArgumentException ex) {
+                    return;
+                }
+                if (p.isSneaking()) {
+                    cm.untrust(p, key, id, nameOf(id));
+                } else {
+                    TrustList.Level current = c.trusted.levelOf(id);
+                    TrustList.Level next = current == TrustList.Level.BUILDER
+                            ? TrustList.Level.MANAGER : TrustList.Level.BUILDER;
+                    cm.trust(p, key, id, nameOf(id), next);
+                }
+                later(() -> openTrustList(p, key));
             }
             case "untrust" -> {
                 UUID id = UUID.fromString(arg);

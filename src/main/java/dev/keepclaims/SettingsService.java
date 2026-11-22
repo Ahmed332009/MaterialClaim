@@ -214,14 +214,32 @@ public final class SettingsService {
         };
     }
 
-    /** May this player change this flag at all, ignoring money? */
+    /**
+     * May this player change this flag at all, ignoring money?
+     *
+     * Roles decide: the owner may do anything on their own land, managers may only touch
+     * free toggles, admins may do anything anywhere. The permission nodes also gate it,
+     * so a server can hand out flag rights without handing out whole territories:
+     * materialclaim.flags for free toggles, materialclaim.flags.paid for paid
+     * protections, materialclaim.flags.any for any territory.
+     */
     public boolean mayChange(Player p, Claim c, Flag f) {
         Role role = roleOf(p, c);
-        if (role == Role.ADMIN || role == Role.OWNER) {
-            return true;
+        if (role == Role.ADMIN) {
+            return p.hasPermission("materialclaim.flags.any")
+                    || p.hasPermission("materialclaim.admin");
         }
-        // Managers may only touch free toggles.
-        return role == Role.MANAGER && !f.isPaid();
+        boolean anyTerritory = p.hasPermission("materialclaim.flags.any");
+        boolean allowedHere = anyTerritory
+                || role == Role.OWNER
+                || (role == Role.MANAGER && !f.isPaid());
+        if (!allowedHere) {
+            return false;
+        }
+        // Free toggles need the basic node; paid protections need the paid node.
+        return f.isPaid()
+                ? p.hasPermission("materialclaim.flags.paid")
+                : p.hasPermission("materialclaim.flags");
     }
 
     /** The reason a change is refused, or null when it is allowed. */
@@ -233,7 +251,14 @@ public final class SettingsService {
             return plugin.message("flag-locked");
         }
         if (!mayChange(p, c, f)) {
-            if (f.isPaid() && roleOf(p, c) == Role.MANAGER) {
+            Role role = roleOf(p, c);
+            boolean lacksFlagNode = f.isPaid()
+                    ? !p.hasPermission("materialclaim.flags.paid")
+                    : !p.hasPermission("materialclaim.flags");
+            if (lacksFlagNode && (role == Role.OWNER || role == Role.ADMIN)) {
+                return plugin.message("no-permission");
+            }
+            if (f.isPaid() && role == Role.MANAGER) {
                 return plugin.message("flag-manager-paid");
             }
             return plugin.message("not-your-claim");
