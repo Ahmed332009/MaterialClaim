@@ -179,6 +179,15 @@ public final class TerritorySettings {
         return n;
     }
 
+    /**
+     * How many paid protections this territory owns. This is what drives the upkeep cost:
+     * buying a protection permanently raises the cost, and switching one off later never
+     * lowers it again. Counts the purchased set so it can only ever grow.
+     */
+    public int purchasedPaidCount() {
+        return purchased.size();
+    }
+
     // ------------------------------------------------- paid protection state
 
     /** True when this protection is switched on and is actually enforced. */

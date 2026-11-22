@@ -76,7 +76,11 @@ Do not run this together with DiamondClaims for long: both use the `/claim` comm
 
 Every territory has its own settings. Open **Settings** from the main menu, or use the commands below.
 
-**Paid protections** start on (vanilla behaviour). Turning one **off** protects the territory. The first time you protect a given territory with a given protection you pay its activation fee once (**24 hours of item value** by default: 2 diamonds, 4 gold ingots or 8 iron ingots, set by `paid-protection-activation-fee`). That purchase is remembered, so you can switch that protection off and on as often as you like afterwards at no extra cost. While a protection is active it also raises the territory's upkeep by `paid-protection-upkeep-multiplier` (25% each), and that extra upkeep is taken out of your banked time straight away. If you cannot afford the fee, the protection is not switched on.
+**Paid protections** (explosions, PvP, mob spawning, fire spread) are **bought once** for exactly **24 hours of the territory's own upkeep**. A territory needs at least 24 hours left before it can buy one; below that the purchase is refused and nothing changes. The menu asks you to confirm first, and the confirmation spells out the 24 hours, the permanent cost rise and that there are no refunds.
+
+After buying, that protection is yours for good: switching it off and on again is **free**, takes no hours, gives none back, and never lowers the cost. Every purchase permanently raises upkeep cost by `paid-protection-upkeep-multiplier` (25% each, counted even while the protection is switched off), so owning all four makes upkeep cost twice as much and a diamond worth 12h drops to 9.6h, 8h, 6.9h and finally 6h. PvP is the same: buy it once, then every mode change (everyone, visitors, trusted, nobody) is free.
+
+Nothing is ever refunded, not when you toggle a protection off and not when you unclaim. If a territory runs out of upkeep its protections switch off but stay bought, so paying upkeep brings them back free.
 
 | Protection | What it stops |
 |---|---|
@@ -104,9 +108,9 @@ Also available: a custom **territory name**, and **entry / leave messages** (`{t
 |---|---|
 | Visitor | Subject to the free-toggle rules only |
 | Builder | Place and break blocks |
-| Manager | Builder, plus: pay upkeep, buy and remove paid protections (the manager pays the fee), change free toggles, name and messages |
+| Manager | Builder, plus: pay upkeep, buy paid protections (the manager pays the 24h of upkeep), change free toggles, name and messages |
 
-Only the owner (or an admin) can add or remove trusted players, change their level, or unclaim. Admins can do everything on every territory and never pay fees. In the menu, tap a trusted player to pick Builder, Manager or Remove.
+Only the owner (or an admin) can add or remove trusted players, change their level, or unclaim. Admins can do everything on every territory and never pay. In the menu, tap a trusted player to pick Builder, Manager or Remove.
 
 ## Commands
 

@@ -581,7 +581,8 @@ public final class ClaimManager {
                 merged.absorb(a.settings);
             }
         }
-        double factor = 1.0 + plugin.settings().upkeepMultiplier() * merged.activePaidCount();
+        // The merged territory pays for every protection any part of it had bought.
+        double factor = 1.0 + plugin.settings().upkeepMultiplier() * merged.purchasedPaidCount();
         double f = newSize * perChunkMultiplier(newSize) * factor;
         double price = plugin.getConfig().getDouble("initial-hours", 96);
         long now = System.currentTimeMillis();
@@ -757,36 +758,21 @@ public final class ClaimManager {
 
     // --------------------------------------------------------------- settings
 
-    /**
-     * Re-prices remaining banked upkeep so a change in the territory's upkeep rate
-     * neither creates nor destroys chunk-hours. Activating a paid protection therefore
-     * takes its extra upkeep straight out of banked time, and turning the protection
-     * off hands back the portion that is no longer being charged.
-     */
-    private void rebasePaidUntil(Claim c, double oldRate) {
-        long now = System.currentTimeMillis();
-        if (c.paidUntil <= now) {
-            return;
-        }
-        double newRate = rate(c);
-        if (oldRate <= 0 || !(newRate > 0) || Math.abs(newRate - oldRate) < 1e-9) {
-            return;
-        }
-        double chunkHours = (c.paidUntil - now) / (double) HOUR_MS * oldRate;
-        c.paidUntil = now + Math.min((long) (chunkHours / newRate * HOUR_MS), maxPrepaidMs());
-    }
+    /** A purchase needs at least this much upkeep left on the territory clock. */
+    public static final long PROTECTION_COST_MS = 24L * 60L * 60L * 1000L;
 
     /**
-     * Applies a flag change, charging for it the first time only.
-     *
-     * This is the one place that decides between "buy" and "free toggle", and the one
-     * place that reports the resulting state, so chat and GUI cannot disagree:
+     * Applies a flag change. Purchasing and toggling are deliberately different:
      *
      * <ul>
-     *   <li>Not bought yet, and the request turns it ON: charge the one-time fee, then
-     *       set purchased and enabled. If the player cannot pay, nothing changes.</li>
-     *   <li>Already bought: no charge ever again, just flip enabled.</li>
-     *   <li>Turning it OFF never refunds anything and keeps the purchase.</li>
+     *   <li><b>Buying</b> an unbought protection takes exactly 24 hours off the territory
+     *       clock and is refused outright when less than 24 hours remain. The purchase also
+     *       raises the upkeep cost permanently, which is why the same items buy less time
+     *       from then on. The 24 hours are the whole price: the cost rise is not also
+     *       charged against the banked time, so the clock loses 24 hours and no more.</li>
+     *   <li><b>Toggling</b> a bought protection is free: no hours are taken, none are
+     *       given back, and the upkeep cost does not move. Only whether the listeners
+     *       enforce it changes.</li>
      * </ul>
      *
      * Returns true when the change was applied.
@@ -805,46 +791,53 @@ public final class ClaimManager {
             return true;
         }
         boolean admin = svc.roleOf(p, c) == SettingsService.Role.ADMIN;
-        // The fee is a one-time purchase, charged only when switching a still-unbought
-        // protection ON. Toggling it off, or toggling it on again later, is free.
-        boolean feeDue = flag.isPaid() && enabled && !admin
-                && !c.settings.isPurchased(flag.id)
-                && svc.activationFeeFor(c) > 0;
-        if (feeDue) {
-            double fee = svc.activationFeeFor(c);
-            // Item values are worth N hours for one chunk at multiplier 1.0, so charging
-            // at 1.0 makes the fee exactly 24 hours of item value whatever the size.
-            PaymentService.Result r = plugin.payments().charge(p, fee, 1.0,
-                    plugin.payments().choiceOf(p));
-            if (!r.ok()) {
-                // Leave it untouched: still not bought, still off.
-                plugin.send(p, "flag-cannot-afford", "flag", flag.title);
-                plugin.sendMini(p, r.error());
+        // Buying happens once: only when switching a protection that is not owned yet ON.
+        // Admins switch protections without paying, and are not marked as buyers.
+        boolean buying = flag.isPaid() && enabled && !admin && !c.settings.isPurchased(flag.id);
+        if (buying) {
+            if (remainingMs(c) < PROTECTION_COST_MS) {
+                plugin.send(p, "flag-need-upkeep", "flag", flag.title,
+                        "time", Util.duration(remainingMs(c)));
                 return false;
             }
+            // The purchase both owns the protection and switches it on, so the cost change
+            // is part of the same step.
             c.settings.markPurchased(flag.id);
-            plugin.send(p, "flag-purchased", "flag", flag.title,
-                    "fee", Util.trim(fee));
+            if (flag == SettingsService.Flag.PVP
+                    && c.settings.pvpScope == TerritorySettings.PvpScope.EVERYONE) {
+                c.settings.pvpScope = TerritorySettings.PvpScope.NOBODY;
+            }
+            svc.set(c, flag, true);
+            // Take exactly 24 hours off the clock. The new higher upkeep rate is NOT
+            // re-priced into the banked time here, or the purchase would cost 24 hours plus
+            // whatever the cost rise eats. The rise already bites on every future payment,
+            // because the same items now buy less time at the higher rate.
+            long now = System.currentTimeMillis();
+            c.paidUntil = Math.max(now, c.paidUntil - PROTECTION_COST_MS);
+            markDirty();
+            // One message only: it already says the protection is now on.
+            plugin.send(p, "flag-purchased", "flag", flag.title, "hours", "24");
+            return true;
         }
         if (flag == SettingsService.Flag.PVP && enabled
                 && c.settings.pvpScope == TerritorySettings.PvpScope.EVERYONE) {
             // "Everyone may fight" is no protection at all, so protecting starts at "nobody".
             c.settings.pvpScope = TerritorySettings.PvpScope.NOBODY;
         }
-        double oldRate = rate(c);
+        // Free toggle: switch it, take nothing, give nothing back. No rebase here, because
+        // the upkeep rate is driven by ownership, which this does not change.
         svc.set(c, flag, enabled);
-        // Price the already-banked upkeep at the new rate, so the extra upkeep is felt
-        // immediately instead of only on the next payment.
-        rebasePaidUntil(c, oldRate);
         markDirty();
         plugin.send(p, "flag-changed", "flag", flag.title, "value", enabled ? "on" : "off");
         return true;
     }
 
     /**
-     * The single PvP control. EVERYONE means no protection (free). Any other choice turns
-     * PvP protection on, which charges the one-time fee the first time, and picks who may
-     * still fight.
+     * The single PvP control. EVERYONE means no protection. Any other choice protects,
+     * which costs 24 hours of upkeep the first time only.
+     *
+     * Once PvP is bought, moving between scopes is free in every direction, including
+     * back to EVERYONE and in again: the purchase and its cost increase are permanent.
      */
     public boolean setPvpScope(Player p, Claim c, TerritorySettings.PvpScope scope) {
         SettingsService svc = plugin.settings();
@@ -854,14 +847,13 @@ public final class ClaimManager {
             return false;
         }
         if (scope == TerritorySettings.PvpScope.EVERYONE) {
-            // No protection at all: switch it off (free, keeps the purchase).
+            // No protection at all: switch it off (free, keeps the purchase and the cost).
             if (c.settings.isEnabled(SettingsService.Flag.PVP.id)
                     && !changeFlag(p, c, SettingsService.Flag.PVP, false)) {
                 return false;
             }
             c.settings.pvpScope = TerritorySettings.PvpScope.EVERYONE;
         } else {
-            // Any other choice protects, which charges the one-time fee if it is unbought.
             TerritorySettings.PvpScope previous = c.settings.pvpScope;
             c.settings.pvpScope = scope;
             if (!c.settings.isEnabled(SettingsService.Flag.PVP.id)
@@ -913,10 +905,10 @@ public final class ClaimManager {
      */
     public boolean dropPaidProtections(Claim c) {
         TerritorySettings s = c.settings;
-        double oldRate = rate(c);
         boolean changed = false;
         // Switch the protections off but keep them purchased, so paying upkeep restores
-        // them for free. Nothing is refunded.
+        // them for free. No rebase: the upkeep cost is locked in by ownership, so dropping
+        // these must not hand the owner back any hours.
         for (SettingsService.Flag f : SettingsService.Flag.values()) {
             if (f.isPaid() && s.isEnabled(f.id)) {
                 s.setEnabled(f.id, false);
@@ -924,8 +916,6 @@ public final class ClaimManager {
             }
         }
         if (changed) {
-            // Protections are gone, so the owner should stop being charged for them.
-            rebasePaidUntil(c, oldRate);
             markDirty();
         }
         return changed;

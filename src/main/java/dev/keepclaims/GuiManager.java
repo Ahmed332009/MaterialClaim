@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class GuiManager implements Listener {
     private static final MiniMessage MM = MiniMessage.miniMessage();
 
-    enum Type { MAIN, PAY, TRUST_ADD, TRUST_LIST, MY_CLAIMS, UNCLAIM, SETTINGS, PVP_SCOPE, MEMBER }
+    enum Type { MAIN, PAY, TRUST_ADD, TRUST_LIST, MY_CLAIMS, UNCLAIM, SETTINGS, PVP_SCOPE, MEMBER, CONFIRM_BUY }
 
     static final class MenuHolder implements InventoryHolder {
         final Type type;
@@ -388,6 +388,62 @@ public final class GuiManager implements Listener {
         p.openInventory(inv);
     }
 
+    /**
+     * Confirmation screen shown before an unpurchased protection is bought. It spells out
+     * the three things a player can regret: the 24 hour cost, the permanent upkeep
+     * increase, and that nothing is ever refunded. The caller has already checked the
+     * territory has enough upkeep.
+     */
+    public void openConfirmBuy(Player p, ChunkKey key, SettingsService.Flag f) {
+        Claim c = plugin.claims().get(key);
+        if (c == null) {
+            plugin.send(p, "no-claim-here");
+            return;
+        }
+        SettingsService svc = plugin.settings();
+        if (!svc.canManage(p, c)) {
+            plugin.send(p, "not-your-claim");
+            return;
+        }
+        // Nothing to confirm if it is already owned; just show the settings menu.
+        if (c.settings.isPurchased(f.id)) {
+            later(() -> openSettings(p, key));
+            return;
+        }
+        long left = plugin.claims().remainingMs(c);
+        MenuHolder h = new MenuHolder(Type.CONFIRM_BUY, key);
+        Inventory inv = create(h, 27, "<dark_green><bold>Buy " + esc(f.title) + "?");
+
+        int owned = c.settings.purchasedPaidCount();
+        double nowFactor = 1.0 + svc.upkeepMultiplier() * owned;
+        double nextFactor = 1.0 + svc.upkeepMultiplier() * (owned + 1);
+        int pct = (int) Math.round(svc.upkeepMultiplier() * 100);
+        List<String> cost = new ArrayList<>();
+        cost.add("<gray>" + f.description);
+        cost.add("");
+        cost.add("<gray>Cost: <white>24 hours <gray>of this territory's upkeep");
+        cost.add("<gray>Upkeep left now: <white>" + Util.duration(left));
+        cost.add("<gray>After buying: <white>"
+                + Util.duration(Math.max(0L, left - ClaimManager.PROTECTION_COST_MS)));
+        cost.add("");
+        cost.add("<gray>Permanent: upkeep cost <white>+" + pct + "%<gray> ("
+                + trim(nowFactor) + "x -> <white>" + trim(nextFactor) + "x<gray>)");
+        cost.add("<gray>Costs stay higher even while this is switched OFF.");
+        cost.add("");
+        cost.add("<red>No refunds. 24 hours is gone for good, and");
+        cost.add("<red>toggling it off later gives nothing back.");
+        set(inv, h, 4, item(Material.REDSTONE_BLOCK, "<red>" + f.title, cost), null);
+
+        set(inv, h, 11, item(Material.LIME_CONCRETE, "<green>Yes, buy for 24 hours",
+                "<gray>Deducts 24 hours and switches it ON.",
+                "<gray>You keep it and can toggle it free from now on."),
+                "buy_confirm:" + f.id);
+        set(inv, h, 15, item(Material.RED_CONCRETE, "<red>No, go back",
+                "<gray>Nothing is charged."), "settings");
+        fillEmpty(inv);
+        p.openInventory(inv);
+    }
+
     /** Sub-menu for one trusted player: pick Builder or Manager, or remove them. */
     public void openMember(Player p, ChunkKey key, UUID id) {
         Claim c = plugin.claims().get(key);
@@ -483,13 +539,14 @@ public final class GuiManager implements Listener {
         List<String> head = new ArrayList<>();
         head.add("<gray>Territory: <white>" + esc(c.displayName()));
         head.add("<gray>Chunks: <white>" + c.size());
-        head.add("<gray>Paid protections ON: <white>" + c.settings.activePaidCount() + "<gray> of 4");
+        head.add("<gray>Protections bought: <white>" + c.settings.purchasedPaidCount() + "<gray> of 4"
+                + " <gray>(<white>" + c.settings.activePaidCount() + " ON<gray>)");
         head.add("<gray>Upkeep rate: <white>" + trim(cm.rate(c)) + " chunk-hours/h");
         set(inv, h, 4, item(Material.PAPER, "<gold>Settings", head), null);
 
         set(inv, h, 0, item(Material.RED_STAINED_GLASS_PANE, "<dark_red>Paid protections",
-                "<gray>Buy once with items, then toggle for free.",
-                "<gray>While ON, each one adds extra upkeep every cycle."), null);
+                "<gray>Buy once for 24h of upkeep, then toggle for free.",
+                "<gray>Each purchase raises upkeep cost permanently."), null);
 
         int slot = 9;
         for (SettingsService.Flag f : new SettingsService.Flag[]{
@@ -542,24 +599,23 @@ public final class GuiManager implements Listener {
         lore.add("");
         if (!owned) {
             lore.add("<gray>Status: <yellow>Not purchased <gray>(off - vanilla behaviour)");
-            if (svc.activationFee() <= 0) {
-                lore.add("<gray>Cost: <green>free");
-            } else {
-                lore.add("<gray>Cost: <white>" + trim(svc.activationFee())
-                        + " hours of upkeep items <gray>(one-time)");
-            }
-            lore.add("<gray>Extra upkeep: <white>+" + Math.round(svc.upkeepMultiplier() * 100)
-                    + "% per cycle");
-            lore.add("<yellow>Click to purchase and enable");
+            lore.add("<gray>Cost: <white>24 hours <gray>of territory upkeep (one-time)");
+            lore.add("<gray>Upkeep left: <white>" + Util.duration(plugin.claims().remainingMs(c)));
+            lore.add("<gray>Permanent upkeep cost: <white>+"
+                    + Math.round(svc.upkeepMultiplier() * 100) + "%");
+            lore.add("<red>No refunds once bought.");
+            lore.add("<yellow>Click to buy");
         } else if (on) {
             lore.add("<gray>Status: <green>ON (protecting)");
             lore.add("<gray>Purchased <gray>(free to toggle, non-refundable)");
-            lore.add("<gray>Extra upkeep: <white>+" + Math.round(svc.upkeepMultiplier() * 100)
-                    + "% per cycle");
+            lore.add("<gray>Upkeep cost locked in: <white>+"
+                    + Math.round(svc.upkeepMultiplier() * 100) + "%");
             lore.add("<yellow>Click to turn OFF");
         } else {
             lore.add("<gray>Status: <yellow>OFF <gray>(vanilla behaviour)");
             lore.add("<gray>Purchased <gray>(free to toggle, non-refundable)");
+            lore.add("<gray>Upkeep cost stays locked in: <white>+"
+                    + Math.round(svc.upkeepMultiplier() * 100) + "%");
             lore.add("<yellow>Click to turn ON");
         }
         if (locked) {
@@ -581,21 +637,21 @@ public final class GuiManager implements Listener {
         lore.add("");
         if (!owned) {
             lore.add("<gray>Status: <yellow>Not purchased <gray>(everyone may fight)");
-            if (svc.activationFee() <= 0) {
-                lore.add("<gray>Cost: <green>free");
-            } else {
-                lore.add("<gray>Cost: <white>" + trim(svc.activationFee())
-                        + " hours of upkeep items <gray>(one-time)");
-            }
-            lore.add("<gray>Extra upkeep: <white>+" + Math.round(svc.upkeepMultiplier() * 100)
-                    + "% per cycle");
+            lore.add("<gray>Cost: <white>24 hours <gray>of territory upkeep (one-time)");
+            lore.add("<gray>Upkeep left: <white>" + Util.duration(plugin.claims().remainingMs(c)));
+            lore.add("<gray>Permanent upkeep cost: <white>+"
+                    + Math.round(svc.upkeepMultiplier() * 100) + "%");
+            lore.add("<red>No refunds once bought.");
+            lore.add("<gray>After buying, every PvP mode change is free.");
         } else if (on) {
             lore.add("<gray>Status: <green>ON (protecting) <gray>- may fight: <white>"
                     + c.settings.pvpScope.label());
             lore.add("<gray>Purchased <gray>(free to toggle, non-refundable)");
+            lore.add("<gray>Changing mode is free.");
         } else {
             lore.add("<gray>Status: <yellow>OFF <gray>(everyone may fight)");
             lore.add("<gray>Purchased <gray>(free to toggle, non-refundable)");
+            lore.add("<gray>Changing mode is free.");
         }
         lore.add("<yellow>Click to choose who may fight");
         if (locked) {
@@ -809,6 +865,19 @@ public final class GuiManager implements Listener {
                 cm.unclaim(p, key);
                 p.closeInventory();
             }
+            case "buy_confirm" -> {
+                SettingsService.Flag flag = SettingsService.Flag.parse(arg);
+                Claim c = cm.get(key);
+                if (flag == null || c == null) {
+                    return;
+                }
+                // changeFlag() re-checks the 24 hours and does the deduction, the purchase
+                // and the cost increase in one step. Save straight away so it cannot be lost.
+                if (cm.changeFlag(p, c, flag, true)) {
+                    cm.saveNow();
+                }
+                later(() -> openSettings(p, key));
+            }
             case "borders" -> {
                 p.closeInventory();
                 showBorders(p, key);
@@ -830,9 +899,21 @@ public final class GuiManager implements Listener {
                 if (c == null) {
                     return;
                 }
-                // State first: flip the authoritative value, then persist it right away.
-                // changeFlag() charges the one-time fee if needed and reports exactly this
-                // same boolean, so chat and the re-rendered menu always agree.
+                boolean owned = c.settings.isPurchased(flag.id);
+                if (!owned && !plugin.settings().get(c, flag)) {
+                    // Buying always needs a confirmation screen. Check the upkeep up front so
+                    // an unaffordable purchase is refused before the player is even asked.
+                    if (cm.remainingMs(c) < ClaimManager.PROTECTION_COST_MS) {
+                        plugin.send(p, "flag-need-upkeep", "flag", flag.title,
+                                "time", Util.duration(cm.remainingMs(c)));
+                        return;
+                    }
+                    later(() -> openConfirmBuy(p, key, flag));
+                    return;
+                }
+                // Already bought: a free toggle. State first, then persist immediately so
+                // reopening the menu cannot lose it. changeFlag() reports exactly this same
+                // boolean, so chat and the re-rendered menu always agree.
                 boolean newState = !plugin.settings().get(c, flag);
                 if (cm.changeFlag(p, c, flag, newState)) {
                     cm.saveNow();
@@ -844,7 +925,20 @@ public final class GuiManager implements Listener {
                 if (c == null) {
                     return;
                 }
-                if (cm.setPvpScope(p, c, TerritorySettings.PvpScope.parse(arg))) {
+                TerritorySettings.PvpScope scope = TerritorySettings.PvpScope.parse(arg);
+                boolean pvpOwned = c.settings.isPurchased(SettingsService.Flag.PVP.id);
+                if (!pvpOwned && scope != TerritorySettings.PvpScope.EVERYONE) {
+                    // Picking a protective scope on an unbought PvP is a purchase, so it needs
+                    // the same confirmation screen as every other protection.
+                    if (cm.remainingMs(c) < ClaimManager.PROTECTION_COST_MS) {
+                        plugin.send(p, "flag-need-upkeep", "flag", SettingsService.Flag.PVP.title,
+                                "time", Util.duration(cm.remainingMs(c)));
+                        return;
+                    }
+                    later(() -> openConfirmBuy(p, key, SettingsService.Flag.PVP));
+                    return;
+                }
+                if (cm.setPvpScope(p, c, scope)) {
                     cm.saveNow();
                 }
                 later(() -> openPvpScope(p, key));

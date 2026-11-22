@@ -69,10 +69,15 @@ public-blocks:
 
 # Per-territory settings.
 #
-# Each paid protection is bought ONCE with items (paid-protection-activation-fee, 24 hours
-# of item value) and is then free to switch on and off forever. While it is switched ON it
-# protects the territory and adds a percentage increase to upkeep every cycle. Nothing is
-# ever refunded, not when you switch it off and not when you unclaim.
+# Each paid protection is bought ONCE for exactly 24 hours taken off the territory's own
+# upkeep clock (a territory needs at least 24 hours left to buy one). After that it is free
+# to switch on and off forever, with no refunds at any point, including when you unclaim.
+#
+# Every purchase also raises that territory's upkeep cost permanently, by
+# paid-protection-upkeep-multiplier each time. The rise is locked in even while the
+# protection is switched OFF, so owning all four makes upkeep cost 2x: a diamond that is
+# worth 12h becomes worth 9.6h, 8h, 6.9h and finally 6h as protections are bought.
+# Switching a bought protection off never lowers the cost and never gives hours back.
 #
 # In the defaults below, true still means vanilla behaviour (the protection is off), so the
 # shipped defaults start every territory with no paid protection. A brand new territory is
@@ -80,12 +85,11 @@ public-blocks:
 #
 # Free toggles never cost anything. true = visitors are allowed to do that thing.
 territory-settings:
-  # Each active paid protection adds this fraction to the territory's upkeep.
+  # Each bought protection (owned, even if switched off) raises upkeep cost by this
+  # fraction, permanently. 0.25 means all four bought = 2x upkeep cost.
   paid-protection-upkeep-multiplier: 0.25
-  # One-time fee to switch a paid protection on, in hours of item value (24 = 2 diamonds,
-  # 4 gold ingots or 8 iron ingots). Bought once per protection per territory: after that
-  # the owner can turn it on and off as often as they like at no extra cost. 0 = no fee.
-  paid-protection-activation-fee: 24.0
+  # The purchase price is not configured here: it is always 24 hours of the territory's
+  # remaining upkeep, because it is paid from the territory clock, not from items.
   defaults:
     explosion-damage: true      # true = vanilla (not protected)
     pvp: true
@@ -134,8 +138,9 @@ messages:
   server-claimed: "<green>Claimed {count} chunk(s) for the server."
   admin-unclaimed: "<yellow>The whole connected territory was removed."
   flag-changed: "<green>{flag} is now {value}."
-  flag-purchased: "<green>Paid {fee} hours of items. {flag} is yours to toggle for free from now on."
+  flag-purchased: "<green>Bought {flag} for {hours} hours of upkeep. It is yours to toggle for free from now on, and nothing is refunded."
   flag-unchanged: "<yellow>{flag} is already {value}."
+  flag-need-upkeep: "<red>You need at least 24 hours of upkeep on this territory to buy {flag}. It has {time} left. Pay upkeep first."
   flag-cannot-afford: "<red>You cannot afford the fee for {flag}. The protection was not enabled."
   flag-locked: "<red>That setting is locked by the server admin."
   flag-manager-paid: "<red>Only the owner can change paid protections."

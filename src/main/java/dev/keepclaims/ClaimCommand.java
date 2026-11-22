@@ -230,9 +230,9 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
                     : (value ? "<green>on" : "<red>off");
             if (f.isPaid()) {
                 shown += c.settings.isPurchased(f.id)
-                        ? " <dark_gray>[purchased, free to toggle]"
-                        : " <dark_gray>[not bought - fee "
-                          + Util.trim(svc.activationFeeFor(c)) + "h once]";
+                        ? " <dark_gray>[purchased, free to toggle, +"
+                          + Math.round(svc.upkeepMultiplier() * 100) + "% upkeep]"
+                        : " <dark_gray>[not bought - costs 24h upkeep once]";
             }
             plugin.sendMini(p, "<gray>- <white>" + f.id + "<gray>: " + shown);
         }

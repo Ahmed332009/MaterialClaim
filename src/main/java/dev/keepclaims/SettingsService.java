@@ -79,7 +79,6 @@ public final class SettingsService {
 
     private final KeepClaims plugin;
     private double upkeepMultiplier = 0.25;
-    private double activationFee = 24.0;
     private TerritorySettings defaults = new TerritorySettings();
     private final List<String> locked = new ArrayList<>();
 
@@ -92,13 +91,14 @@ public final class SettingsService {
         ConfigurationSection sec = plugin.getConfig().getConfigurationSection("territory-settings");
         if (sec == null) {
             upkeepMultiplier = 0.25;
-            activationFee = 24.0;
             defaults = new TerritorySettings();
             locked.clear();
             return;
         }
         upkeepMultiplier = sec.getDouble("paid-protection-upkeep-multiplier", 0.25);
-        activationFee = sec.getDouble("paid-protection-activation-fee", 24.0);
+        // The old paid-protection-activation-fee (an item fee) no longer applies: buying a
+        // protection now costs a flat 24 hours off the territory clock. The key is ignored
+        // if it is still present in an existing config.yml.
         defaults = TerritorySettings.fromConfig(sec.getConfigurationSection("defaults"));
         locked.clear();
         // "locked" may be written as a map of flag: true (preferred) or a plain list.
@@ -124,10 +124,6 @@ public final class SettingsService {
         return upkeepMultiplier;
     }
 
-    public double activationFee() {
-        return activationFee;
-    }
-
     /** Fresh settings from the config defaults, for a brand new territory. */
     public TerritorySettings defaults() {
         return defaults.copy();
@@ -135,18 +131,17 @@ public final class SettingsService {
 
     /**
      * The upkeep multiplier for a territory including its paid protections.
-     * One active protection adds paid-protection-upkeep-multiplier, two add twice
-     * that, and so on.
+     *
+     * This is driven by how many protections the territory has <b>bought</b>, not by how
+     * many are switched on: buying permanently locks in the higher cost, and switching one
+     * off later never lowers it. Each bought protection adds paid-protection-upkeep-multiplier,
+     * so owning all four is 1 + 4 * 0.25 = 2.0 and a diamond (12h) is worth 6h.
      */
     public double upkeepFactor(Claim c) {
         if (c == null) {
             return 1.0;
         }
-        return 1.0 + upkeepMultiplier * c.settings.activePaidCount();
-    }
-
-    public double activationFeeFor(Claim c) {
-        return activationFee;
+        return 1.0 + upkeepMultiplier * c.settings.purchasedPaidCount();
     }
 
     // ----------------------------------------------------------------- reading
