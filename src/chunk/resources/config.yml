@@ -1,0 +1,151 @@
+# MaterialClaim configuration
+# Item values below are hours of upkeep for ONE chunk. A diamond is worth 12 hours.
+
+# Worlds where claiming is allowed. Empty list = every world.
+enabled-worlds: []
+
+# Default maximum chunks per player (all territories together). Give more with the permission materialclaim.limit.<number>
+max-claims-default: 25
+
+# Claim price per chunk, as item value in hours (96 = 8 diamonds when diamond is worth 12).
+# Every new chunk costs this, whether it starts a new territory or joins one you already own.
+initial-hours: 96
+
+# Nobody can bank more than this many days of upkeep on one territory.
+max-prepaid-days: 14
+
+# After upkeep ends the territory keeps protecting for this many days, then it is removed.
+grace-days: 7
+
+# How often (minutes) the plugin checks for expired claims.
+check-interval-minutes: 5
+
+# Players are warned on join when a territory has less than this many days left.
+warn-days: 3
+
+# Chunks that touch each other (sides only) become ONE territory with one payment,
+# one upkeep clock and one trust list. Set to true to also join chunks that only touch at a corner.
+# Note: with false, corner-touching chunks stay separate territories.
+connect-diagonals: false
+
+# How the upkeep rate grows with territory size.
+# A territory of n chunks drains n x multiplier chunk-hours per hour, where the multiplier
+# is chosen by n. 1.0 = every chunk costs the same. Above 1.0 = big territories pay more per chunk.
+# Example: 1-5 chunks 1.0, 6-15 chunks 1.1, 16 and more 1.25
+group-upkeep:
+  - up-to: 1000
+    multiplier: 1.0
+
+# Accepted items and the hours of upkeep each is worth for ONE chunk.
+# Only plain items count (renamed or enchanted items are ignored).
+# The claim price is initial-hours (96), so one chunk costs 64 copper, 32 iron,
+# 16 gold, 8 diamonds or 1 netherite ingot. A diamond is worth 12 hours.
+# Blocks are worth 9x the matching ingot.
+materials:
+  COPPER_INGOT: 1.5
+  COPPER_BLOCK: 13.5
+  IRON_INGOT: 3
+  IRON_BLOCK: 27
+  GOLD_INGOT: 6
+  GOLD_BLOCK: 54
+  DIAMOND: 12
+  DIAMOND_BLOCK: 108
+  NETHERITE_INGOT: 96
+  NETHERITE_BLOCK: 864
+
+# Blocks anyone may still use inside other players' claims.
+public-blocks:
+  - CRAFTING_TABLE
+  - ENDER_CHEST
+  - ENCHANTING_TABLE
+  - ANVIL
+  - CHIPPED_ANVIL
+  - DAMAGED_ANVIL
+  - GRINDSTONE
+  - LOOM
+  - CARTOGRAPHY_TABLE
+  - STONECUTTER
+  - SMITHING_TABLE
+
+# Per-territory settings.
+#
+# Each paid protection is bought ONCE for exactly 24 hours taken off the territory's own
+# upkeep clock (a territory needs at least 24 hours left to buy one). After that it is free
+# to switch on and off forever, with no refunds at any point, including when you unclaim.
+#
+# Every purchase also raises that territory's upkeep cost permanently, by
+# paid-protection-upkeep-multiplier each time. The rise is locked in even while the
+# protection is switched OFF, so owning all four makes upkeep cost 2x: a diamond that is
+# worth 12h becomes worth 9.6h, 8h, 6.9h and finally 6h as protections are bought.
+# Switching a bought protection off never lowers the cost and never gives hours back.
+#
+# In the defaults below, true still means vanilla behaviour (the protection is off), so the
+# shipped defaults start every territory with no paid protection. A brand new territory is
+# created from these defaults with nothing purchased.
+#
+# Free toggles never cost anything. true = visitors are allowed to do that thing.
+territory-settings:
+  # Each bought protection (owned, even if switched off) raises upkeep cost by this
+  # fraction, permanently. 0.25 means all four bought = 2x upkeep cost.
+  paid-protection-upkeep-multiplier: 0.25
+  # The purchase price is not configured here: it is always 24 hours of the territory's
+  # remaining upkeep, because it is paid from the territory clock, not from items.
+  defaults:
+    explosion-damage: true      # true = vanilla (not protected)
+    pvp: true
+    mob-spawning: true
+    fire-spread: true
+    visitor-doors: false
+    visitor-containers: false
+    visitor-animals: false
+    mob-griefing: false         # false = blocked (safe by default)
+    fluid-flow: false
+    crop-trample: false
+  # Admin can lock flags so players cannot change them. Set true to lock server-wide.
+  locked:
+    fire-spread: false
+
+# Messages use MiniMessage formatting.
+messages:
+  prefix: "<dark_green>[Claims]</dark_green> "
+  no-permission: "<red>You do not have permission."
+  world-disabled: "<red>Claiming is not allowed in this world."
+  already-yours: "<yellow>You already own this chunk."
+  already-claimed: "<red>This chunk already belongs to {owner}."
+  limit-reached: "<red>You reached your claim limit of {limit}."
+  claim-success: "<green>Chunk claimed. Your territory is now <white>{size}</white> chunk(s) with <white>{time}</white> of upkeep."
+  unclaim-success: "<yellow>Chunk unclaimed. Upkeep is not refunded."
+  no-claim-here: "<red>There is no claim here."
+  not-your-claim: "<red>That is not your claim."
+  pay-success: "<green>Upkeep paid. This claim now has <white>{time}</white> left."
+  max-prepaid: "<yellow>This claim is already at the maximum prepaid time."
+  # Shown when a territory has room for less than a single item. Nothing is taken.
+  over-cap: "<red>This territory can only hold {room} more upkeep, which is not enough for even one of those items. Pick a cheaper item, or use automatic."
+  # Shown when a payment works out to zero or less (should not normally happen).
+  nothing-paid: "<red>There is nothing to pay here."
+  protected: "<red>This land is claimed by {owner}."
+  trust-added: "<green>{name} can now build in this claim."
+  trust-removed: "<yellow>{name} was removed from this claim."
+  trust-self: "<red>You cannot trust yourself."
+  already-trusted: "<yellow>{name} is already trusted here."
+  unknown-player: "<red>Player not found."
+  claim-expired: "<red>Your territory of {size} chunk(s) near chunk {x}, {z} ran out of upkeep and was removed."
+  unclaim-split: "<red>Unclaiming this chunk would split your territory in two. Unclaim from the edges instead."
+  expiring-warning: "<yellow>{count} of your territories are running low on upkeep. Open /claims to pay."
+  reloaded: "<green>MaterialClaim reloaded."
+  bypass-on: "<yellow>Claim bypass enabled."
+  bypass-off: "<yellow>Claim bypass disabled."
+  server-claimed: "<green>Claimed {count} chunk(s) for the server."
+  admin-unclaimed: "<yellow>The whole connected territory was removed."
+  flag-changed: "<green>{flag} is now {value}."
+  flag-purchased: "<green>Bought {flag} for {hours} hours of upkeep. It is yours to toggle for free from now on, and nothing is refunded."
+  flag-unchanged: "<yellow>{flag} is already {value}."
+  flag-need-upkeep: "<red>You need at least 24 hours of upkeep on this territory to buy {flag}. It has {time} left. Pay upkeep first."
+  flag-cannot-afford: "<red>You cannot afford the fee for {flag}. The protection was not enabled."
+  flag-locked: "<red>That setting is locked by the server admin."
+  flag-manager-paid: "<red>Only the owner can change paid protections."
+  flag-unknown: "<red>Unknown flag: {flag}."
+  territory-not-found: "<red>No territory found for {query}."
+  protections-dropped: "<red>{name} ran out of upkeep, so its paid protections were switched off. Pay upkeep to restore them."
+  text-prompt: "<yellow>Type the new value in chat, or type cancel."
+  text-cancelled: "<yellow>Cancelled. Nothing was changed."

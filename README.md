@@ -1,10 +1,15 @@
 # MaterialClaim
 
-Land claims paid with items instead of money. No economy plugin, no Vault. Like GriefPrevention, players claim **land in blocks** with a **golden shovel**, then pay upkeep with Minecraft materials. Claims run out if not maintained and are eventually removed.
+**Two plugins ship in one release. Install ONE of them:**
 
-The chest menu also works for Bedrock players through Geyser.
+| Jar | Plugin | Claiming |
+| --- | --- | --- |
+| `MaterialClaim_Chunk` | `MaterialClaim_Chunk` | One 16x16 chunk at a time (identical to 0.3.6) |
+| `MaterialClaim_Block` | `MaterialClaim_Block` | Any block rectangle with a golden shovel, GriefPrevention style |
 
-**Honest status:** the GUI was tested on both Java and Bedrock in the 0.1.x versions. **Territories (version 0.2.0) are new and have not been tested on a live server yet** — if something misbehaves, please open an issue.
+Both use `/claims` and both claim land, so do not run them together on one server.
+Everything below describes **MaterialClaim_Block**; the chunk plugin behaves exactly as
+0.3.6 did, with chunk claiming in place of the shovel.
 
 ## Features
 
@@ -41,6 +46,21 @@ Sneak + right click with the shovel on your own land removes that rectangle.
 Claiming a brand new area costs `claim-price.per-chunk-hours` per 256 blocks (default
 **96 hours** of item value), whatever size the selection is. Item values below are hours of
 upkeep for **one chunk** (256 blocks). Blocks are worth **9x** the matching ingot (copper block 13.5, iron block 27, gold block 54, diamond block 108, netherite block 864). Only plain items count — renamed or enchanted items are ignored.
+
+## Building both jars
+
+The repository holds one plugin with two claim-style variants:
+
+```
+src/shared/   code identical in both plugins (protection, payments, settings, trust)
+src/chunk/    MaterialClaim_Chunk sources + resources
+src/block/    MaterialClaim_Block sources + resources
+```
+
+`./gradlew build` produces both jars in `build/libs/`:
+`MaterialClaim_Chunk-<version>.jar` and `MaterialClaim_Block-<version>.jar`.
+The two variants both use the package `dev.keepclaims` because they share the
+`src/shared` classes, which is safe only because a server runs one of them.
 
 ## Requirements
 

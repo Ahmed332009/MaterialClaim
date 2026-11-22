@@ -22,41 +22,72 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Build
-        run: ./gradlew jar --no-daemon --stacktrace
+      - name: Build both plugins
+        run: ./gradlew build --no-daemon --stacktrace
 
-      # Guard against the "build succeeds but the jar is empty" failure mode:
-      # plugin.yml and the compiled classes must actually be inside the jar.
-      - name: Verify jar contents
+      # Guard against the "build succeeds but the jar is empty" failure mode, for BOTH
+      # jars, and make sure the two plugins really are two different plugins.
+      - name: Verify both jars
         run: |
-          JAR=$(ls build/libs/*.jar | head -n 1)
-          echo "Checking $JAR"
-          unzip -l "$JAR" | grep -q 'plugin.yml' \
-            || { echo '::error::plugin.yml missing from jar'; exit 1; }
-          unzip -l "$JAR" | grep -q 'dev/keepclaims/KeepClaims.class' \
-            || { echo '::error::compiled classes missing from jar'; exit 1; }
-          if unzip -p "$JAR" plugin.yml | grep -q '\${version}'; then
-            echo '::error::version placeholder in plugin.yml was not expanded'; exit 1
+          set -e
+          CHUNK=build/libs/MaterialClaim_Chunk-*.jar
+          BLOCK=build/libs/MaterialClaim_Block-*.jar
+          ls -1 $CHUNK $BLOCK
+
+          for JAR in $CHUNK $BLOCK; do
+            echo "Checking $JAR"
+            unzip -l "$JAR" | grep -q 'plugin.yml' \
+              || { echo "::error::plugin.yml missing from $JAR"; exit 1; }
+            unzip -l "$JAR" | grep -q 'dev/keepclaims/KeepClaims.class' \
+              || { echo "::error::compiled classes missing from $JAR"; exit 1; }
+            if unzip -p "$JAR" plugin.yml | grep -q '\${version}'; then
+              echo "::error::version placeholder in $JAR plugin.yml was not expanded"; exit 1
+            fi
+          done
+
+          # Distinct plugin names, so the server can tell them apart.
+          CHUNK_NAME=$(unzip -p $CHUNK plugin.yml | grep '^name:' | awk '{print $2}')
+          BLOCK_NAME=$(unzip -p $BLOCK plugin.yml | grep '^name:' | awk '{print $2}')
+          echo "chunk plugin name: $CHUNK_NAME"
+          echo "block plugin name: $BLOCK_NAME"
+          [ "$CHUNK_NAME" = "MaterialClaim_Chunk" ] \
+            || { echo "::error::chunk jar is not MaterialClaim_Chunk"; exit 1; }
+          [ "$BLOCK_NAME" = "MaterialClaim_Block" ] \
+            || { echo "::error::block jar is not MaterialClaim_Block"; exit 1; }
+          [ "$CHUNK_NAME" != "$BLOCK_NAME" ] \
+            || { echo "::error::both jars claim the same plugin name"; exit 1; }
+
+          # The block jar must contain the shovel selection code; the chunk jar must not.
+          unzip -l $BLOCK | grep -q 'dev/keepclaims/SelectionListener.class' \
+            || { echo "::error::block jar is missing SelectionListener"; exit 1; }
+          if unzip -l $CHUNK | grep -q 'dev/keepclaims/SelectionListener.class'; then
+            echo "::error::chunk jar unexpectedly contains SelectionListener"; exit 1
           fi
-          echo "Jar contents OK"
+          if unzip -l $BLOCK | grep -q 'dev/keepclaims/ChunkKey.class'; then
+            echo "::error::block jar unexpectedly contains ChunkKey"; exit 1
+          fi
+
+          echo "Both jars OK"
 
       - uses: actions/upload-artifact@v6
         with:
-          name: MaterialClaim
-          path: build/libs/*.jar
+          name: MaterialClaim-both
+          path: |
+            build/libs/MaterialClaim_Chunk-*.jar
+            build/libs/MaterialClaim_Block-*.jar
           if-no-files-found: error
 
-      # On a v* tag, publish the jar as a GitHub Release. Running this inside the
-      # build job means the release always uses the jar that just passed the
-      # verification step above.
-      - name: Publish release
+      # On a v* tag, publish BOTH jars as one GitHub Release. Running this inside the
+      # build job means the release always uses the jars that just passed verification.
+      - name: Publish release with both jars
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Only the plugin jar, never a -plain / -sources / -javadoc jar.
-          JAR=$(ls build/libs/*.jar | grep -v -e '-plain' -e '-sources' -e '-javadoc' | head -n 1)
-          echo "Publishing $JAR"
-          gh release create "$GITHUB_REF_NAME" "$JAR" \
+          set -e
+          CHUNK=$(ls build/libs/MaterialClaim_Chunk-*.jar | head -n 1)
+          BLOCK=$(ls build/libs/MaterialClaim_Block-*.jar | head -n 1)
+          echo "Publishing $CHUNK and $BLOCK"
+          gh release create "$GITHUB_REF_NAME" "$CHUNK" "$BLOCK" \
             --title "MaterialClaim ${GITHUB_REF_NAME#v}" \
             --notes-file .github/release-notes.md

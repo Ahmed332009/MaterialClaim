@@ -1,0 +1,27 @@
+name: MaterialClaim_Block
+version: '${version}'
+main: dev.keepclaims.KeepClaims
+api-version: '1.21'
+authors: [Ahmed332009]
+description: Claim land in blocks with a golden shovel, GriefPrevention style, paid with items.
+commands:
+  claims:
+    aliases: [claim, kc]
+    description: Land claims menu, shovel selection and settings
+    usage: /claims
+permissions:
+  materialclaim.use:
+    default: true
+    description: Use /claims and the claim menu
+  materialclaim.admin:
+    default: op
+    description: Admin override for claims and every territory setting
+  materialclaim.flags:
+    default: true
+    description: Change free territory toggles (owner and managers)
+  materialclaim.flags.paid:
+    default: true
+    description: Change paid protections on your own territory
+  materialclaim.flags.any:
+    default: op
+    description: Change any territory setting on any territory

@@ -19,17 +19,71 @@ java {
     toolchain.languageVersion.set(JavaLanguageVersion.of(21))
 }
 
-// Standard Maven layout: sources in src/main/java, resources in src/main/resources.
-// Do NOT point sourceSets at the repository root. The root copies are only the phone-upload
-// staging area; the real sources live under src/. Overriding sourceSets to "." makes Gradle
-// compile the stale root copies instead and drop plugin.yml from the jar.
+// ---------------------------------------------------------------------------
+// ONE repository, TWO plugins, TWO jars.
+//
+//   src/shared  - code that is identical in both plugins (protection listener,
+//                 payment, settings, trust list, helpers). Compiled into both.
+//   src/chunk   - MaterialClaim_Chunk: the original chunk-by-chunk claiming.
+//   src/block   - MaterialClaim_Block: block claiming with a golden shovel.
+//
+// Both jars live in the SAME package (dev.keepclaims) because they share the
+// shared classes. That is safe as long as only one is installed: they are two
+// separate plugins that both claim land, so running both on one server would
+// fight over the same ground.
+// ---------------------------------------------------------------------------
+
+val sharedSrc = file("src/shared/java")
+
+val chunk by sourceSets.creating {
+    java.setSrcDirs(listOf("src/chunk/java", sharedSrc))
+    resources.setSrcDirs(listOf("src/chunk/resources"))
+    compileClasspath += sourceSets["main"].compileClasspath
+}
+
+val block by sourceSets.creating {
+    java.setSrcDirs(listOf("src/block/java", sharedSrc))
+    resources.setSrcDirs(listOf("src/block/resources"))
+    compileClasspath += sourceSets["main"].compileClasspath
+}
+
+// The default 'main' source set is not used; keep it out of the build.
+sourceSets["main"].java.setSrcDirs(emptyList<String>())
+sourceSets["main"].resources.setSrcDirs(emptyList<String>())
 
 tasks.processResources {
+    // ${version} in plugin.yml, for whichever variant is being packaged.
     filesMatching("plugin.yml") {
         expand("version" to project.version)
     }
 }
 
-tasks.jar {
-    archiveBaseName.set("MaterialClaim")
+val chunkJar by tasks.registering(Jar::class) {
+    group = "build"
+    description = "Builds the MaterialClaim_Chunk plugin jar."
+    archiveBaseName.set("MaterialClaim_Chunk")
+    archiveClassifier.set("")
+    from(chunk.output)
+    dependsOn(tasks.named(chunk.classesTaskName))
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+val blockJar by tasks.registering(Jar::class) {
+    group = "build"
+    description = "Builds the MaterialClaim_Block plugin jar."
+    archiveBaseName.set("MaterialClaim_Block")
+    archiveClassifier.set("")
+    from(block.output)
+    dependsOn(tasks.named(block.classesTaskName))
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+tasks.named("build") {
+    dependsOn(chunkJar, blockJar)
+}
+
+// `./gradlew jar` is what the release workflow runs; make it produce both jars.
+tasks.named("jar") {
+    dependsOn(chunkJar, blockJar)
+    enabled = false
 }

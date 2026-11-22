@@ -1,8 +1,9 @@
-name: MaterialClaim
+name: MaterialClaim_Chunk
 version: '${version}'
 main: dev.keepclaims.KeepClaims
 api-version: '1.21'
 authors: [Ahmed332009]
+description: Claim land chunk by chunk, paid with items.
 commands:
   claims:
     aliases: [claim, kc]
