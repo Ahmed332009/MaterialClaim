@@ -784,15 +784,12 @@ public final class ClaimManager {
             plugin.sendMini(p, refuse);
             return false;
         }
-        boolean current = svc.get(c, flag);
-        if (current == enabled) {
-            plugin.send(p, "flag-unchanged", "flag", flag.title,
-                    "value", enabled ? "on" : "off");
-            return true;
-        }
         boolean admin = svc.roleOf(p, c) == SettingsService.Role.ADMIN;
-        // Buying happens once: only when switching a protection that is not owned yet ON.
-        // Admins switch protections without paying, and are not marked as buyers.
+        // Buying happens once: whenever the protection is not owned yet and is being asked
+        // for. This is checked BEFORE the "already in that state" shortcut on purpose: a
+        // protection can be switched on without being owned (an admin toggled it, or it
+        // came from older data), and the owner must still be able to buy it by clicking.
+        // Admins switch protections without paying, and are never marked as buyers.
         boolean buying = flag.isPaid() && enabled && !admin && !c.settings.isPurchased(flag.id);
         if (buying) {
             if (remainingMs(c) < PROTECTION_COST_MS) {
@@ -813,10 +810,20 @@ public final class ClaimManager {
             // whatever the cost rise eats. The rise already bites on every future payment,
             // because the same items now buy less time at the higher rate.
             long now = System.currentTimeMillis();
+            long before = c.paidUntil;
             c.paidUntil = Math.max(now, c.paidUntil - PROTECTION_COST_MS);
+            plugin.getLogger().info("Protection bought: " + flag.id + " by " + p.getName()
+                    + " on " + c.displayName() + " - upkeep " + Util.duration(before - now)
+                    + " -> " + Util.duration(c.paidUntil - now));
             markDirty();
             // One message only: it already says the protection is now on.
             plugin.send(p, "flag-purchased", "flag", flag.title, "hours", "24");
+            return true;
+        }
+        boolean current = svc.get(c, flag);
+        if (current == enabled) {
+            plugin.send(p, "flag-unchanged", "flag", flag.title,
+                    "value", enabled ? "on" : "off");
             return true;
         }
         if (flag == SettingsService.Flag.PVP && enabled
@@ -856,8 +863,11 @@ public final class ClaimManager {
         } else {
             TerritorySettings.PvpScope previous = c.settings.pvpScope;
             c.settings.pvpScope = scope;
-            if (!c.settings.isEnabled(SettingsService.Flag.PVP.id)
-                    && !changeFlag(p, c, SettingsService.Flag.PVP, true)) {
+            // Unbought PvP must go through changeFlag() even if it is already switched on,
+            // so the 24 hour purchase is actually charged.
+            boolean needsBuy = !c.settings.isPurchased(SettingsService.Flag.PVP.id)
+                    || !c.settings.isEnabled(SettingsService.Flag.PVP.id);
+            if (needsBuy && !changeFlag(p, c, SettingsService.Flag.PVP, true)) {
                 c.settings.pvpScope = previous;
                 return false;
             }

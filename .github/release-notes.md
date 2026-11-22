@@ -1,29 +1,29 @@
-**Protections now cost 24 hours of upkeep, and the cost rise is permanent.**
+**Fix: buying a protection now really takes its 24 hours.**
 
-Buying a protection used to take items out of your inventory. It now takes time off the
-territory's own upkeep clock, which is what the menu and the release notes always promised.
+Buying a protection could silently cost nothing, so upkeep stayed at the same number even
+after buying several. The cause was in how a protection decided whether it had already been
+paid for.
 
-- **A protection costs exactly 24 hours of upkeep.** If a territory has 3d 23h left, buying
-  one leaves it on 2d 23h. The purchase is refused, with a clear message, when the territory
-  has less than 24 hours left, so you can never buy your way into an expired territory.
-- **Confirm before you buy.** Clicking an unbought protection opens a confirmation screen
-  that states the 24 hour cost, the permanent upkeep rise, and that nothing is refunded.
-  Confirming takes the 24 hours and switches the protection on. Cancelling charges nothing.
-- **The upkeep cost rise is permanent.** Buying a protection raises upkeep cost by 25% for
-  good. The rise stays locked in even while that protection is switched OFF, so cost never
-  falls back. Owning all four makes upkeep cost 2x: a diamond worth 12h is worth 9.6h after
-  the first, then 8h, 6.9h and finally 6h.
-- **Toggling a bought protection is completely free.** It takes no hours, gives none back,
-  and does not move the upkeep cost. Only whether the protection is enforced changes.
-- **PvP works the same way.** Buy it once for 24 hours, then every mode change is free:
-  everyone, visitors only, trusted only, nobody.
-- **Nothing is refunded, ever.** Not when you switch a protection off, and not when you
-  unclaim. If a territory runs out of upkeep its protections switch off but stay bought, so
-  paying upkeep brings them back for free.
+- **The bug.** A protection was marked "bought" whenever it was switched on, not only when
+  it was actually paid for. So an admin switching one on, or a protection left on by older
+  saved data, quietly counted as already owned. Every later click was then treated as a free
+  toggle and the 24 hours were never taken.
+- **The fix.** Being "bought" is now only ever set by a purchase that really charged. Turning
+  something on no longer implies you own it.
+- **Buying works even if it was already on.** An unowned protection that happens to be
+  switched on is now charged properly when the owner clicks it, instead of being skipped as
+  "already on".
+- **Still visible and safe.** The settings screen now shows the territory's remaining upkeep,
+  and every purchase writes one line to the server console, for example
+  `Protection bought: explosions by Steve on Home - upkeep 3d 23h -> 2d 23h`, so the
+  deduction can be checked directly.
+- **Enforcement follows the switch.** A protection shows as ON only if it really is enforced,
+  including one an admin switched on. Ownership decides whether you still owe the purchase;
+  it never makes an ON protection silently stop working.
 
-Your existing territories keep their purchases. Note that a territory that already owned
-protections now pays the full upkeep cost for them, because the cost is based on ownership
-rather than on what is currently switched on. That is intended: the cost rise is permanent.
+Buying still costs exactly 24 hours off the territory clock, is refused below 24 hours, needs
+a confirmation, raises upkeep cost permanently, and toggling a bought protection is still
+free with no refunds.
 
 - Chest menu works on Java and Bedrock (Geyser). Protection settings use normal taps only.
 - Needs Paper 1.21.1+ and Java 21+. These settings have not been tested on a live server yet:
