@@ -51,8 +51,16 @@ val block by sourceSets.creating {
 sourceSets["main"].java.setSrcDirs(emptyList<String>())
 sourceSets["main"].resources.setSrcDirs(emptyList<String>())
 
-tasks.processResources {
-    // ${version} in plugin.yml, for whichever variant is being packaged.
+// ${version} in plugin.yml must be expanded in EACH variant's resources. The default
+// 'main' processResources task is not used by the variants, so it is not enough to
+// configure it here: the chunk and block tasks need it too.
+tasks.named<ProcessResources>(chunk.processResourcesTaskName) {
+    filesMatching("plugin.yml") {
+        expand("version" to project.version)
+    }
+}
+
+tasks.named<ProcessResources>(block.processResourcesTaskName) {
     filesMatching("plugin.yml") {
         expand("version" to project.version)
     }
