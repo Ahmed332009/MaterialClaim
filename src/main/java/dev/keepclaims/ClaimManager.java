@@ -83,8 +83,14 @@ public final class ClaimManager {
         return Math.max(0.01, tiers.get(tiers.size() - 1)[1]);
     }
 
-    /** Chunk-hours drained per hour by this territory. */
+    /** Chunk-hours drained per hour by this territory, including paid protections. */
     public double rate(Claim c) {
+        int n = Math.max(1, c.size());
+        return n * perChunkMultiplier(n) * plugin.settings().upkeepFactor(c);
+    }
+
+    /** Chunk-hours drained per hour by this territory before paid protections. */
+    public double baseRate(Claim c) {
         int n = Math.max(1, c.size());
         return n * perChunkMultiplier(n);
     }
@@ -116,6 +122,20 @@ public final class ClaimManager {
             }
         }
         return limit;
+    }
+
+    /** Copies every setting from src into dst (used when a claim gains defaults). */
+    static void copySettings(TerritorySettings src, TerritorySettings dst) {
+        dst.explosionDamage = src.explosionDamage;
+        dst.pvp = src.pvp;
+        dst.mobSpawning = src.mobSpawning;
+        dst.fireSpread = src.fireSpread;
+        dst.visitorDoors = src.visitorDoors;
+        dst.visitorContainers = src.visitorContainers;
+        dst.visitorAnimals = src.visitorAnimals;
+        dst.mobGriefing = src.mobGriefing;
+        dst.fluidFlow = src.fluidFlow;
+        dst.cropTrample = src.cropTrample;
     }
 
     public int ownedChunks(UUID owner) {
@@ -169,11 +189,13 @@ public final class ClaimManager {
                     long created = ((Number) m.get("created")).longValue();
                     long paid = ((Number) m.get("paid-until")).longValue();
                     Claim c = new Claim(owner, name == null ? "Server" : String.valueOf(name), created, paid);
-                    if (m.get("trusted") instanceof List<?> tl) {
-                        for (Object t : tl) {
-                            c.trusted.add(UUID.fromString(String.valueOf(t)));
-                        }
+                    // Existing claims get the configured defaults; stored settings override them.
+                    copySettings(plugin.settings().defaults(), c.settings);
+                    Object stored = m.get("settings");
+                    if (stored instanceof Map<?, ?> sm) {
+                        c.settings.readFrom(sm);
                     }
+                    c.trusted.readStored(m.get("trusted"));
                     if (m.get("chunks") instanceof List<?> cl) {
                         for (Object o : cl) {
                             c.chunks.add(parseKey(String.valueOf(o)));
@@ -198,7 +220,7 @@ public final class ClaimManager {
         String name;
         long created;
         long paid;
-        final Set<UUID> trusted = new LinkedHashSet<>();
+        final TrustList trusted = new TrustList();
     }
 
     /** Converts the old one-claim-per-chunk file format into connected territories. */
@@ -216,7 +238,7 @@ public final class ClaimManager {
                 o.paid = ((Number) m.get("paid-until")).longValue();
                 if (m.get("trusted") instanceof List<?> tl) {
                     for (Object t : tl) {
-                        o.trusted.add(UUID.fromString(String.valueOf(t)));
+                        o.trusted.set(UUID.fromString(String.valueOf(t)), TrustList.Level.BUILDER);
                     }
                 }
                 olds.add(o);
@@ -269,7 +291,9 @@ public final class ClaimManager {
                     pool += Math.max(0, o.paid - now) / (double) HOUR_MS;
                     created = Math.min(created, o.created);
                     latestPaid = Math.max(latestPaid, o.paid);
-                    c.trusted.addAll(o.trusted);
+                    for (var e : o.trusted.entries().entrySet()) {
+                        c.trusted.set(e.getKey(), e.getValue());
+                    }
                     c.chunks.add(o.key);
                 }
                 c.created = created;
@@ -308,7 +332,8 @@ public final class ClaimManager {
             m.put("owner-name", c.ownerName);
             m.put("created", c.created);
             m.put("paid-until", c.paidUntil);
-            m.put("trusted", c.trusted.stream().map(UUID::toString).toList());
+            m.put("trusted", c.trusted.toMap());
+            m.put("settings", c.settings.toMap());
             m.put("chunks", c.chunks.stream().map(ClaimManager::keyString).toList());
             out.add(m);
         }
@@ -343,6 +368,54 @@ public final class ClaimManager {
     }
 
     /** The player's territories, oldest first. */
+    /** All territories, for admin listings. */
+    public Set<Claim> all() {
+        return territories;
+    }
+
+    /**
+     * Finds a territory by its custom name, the owner's name (case insensitive), or a
+     * "x,z" chunk id as reported by /claims list. Used by the optional [territory]
+     * argument so admins can target a claim they are not standing in.
+     */
+    public Claim findTerritory(String query) {
+        if (query == null || query.isBlank()) {
+            return null;
+        }
+        String q = query.trim();
+        String lower = q.toLowerCase(java.util.Locale.ROOT);
+        // "x,z" id
+        if (q.contains(",")) {
+            String[] parts = q.split(",");
+            if (parts.length == 2) {
+                try {
+                    int x = Integer.parseInt(parts[0].trim());
+                    int z = Integer.parseInt(parts[1].trim());
+                    for (Claim c : territories) {
+                        for (ChunkKey k : c.chunks) {
+                            if (k.x() == x && k.z() == z) {
+                                return c;
+                            }
+                        }
+                    }
+                } catch (NumberFormatException ignored) {
+                    // fall through to the name search
+                }
+            }
+        }
+        for (Claim c : territories) {
+            if (c.settings.customName != null && c.settings.customName.equalsIgnoreCase(q)) {
+                return c;
+            }
+        }
+        for (Claim c : territories) {
+            if (c.ownerName != null && c.ownerName.equalsIgnoreCase(q)) {
+                return c;
+            }
+        }
+        return null;
+    }
+
     public List<Claim> byOwner(UUID owner) {
         List<Claim> list = new ArrayList<>();
         for (Claim c : territories) {
@@ -425,8 +498,7 @@ public final class ClaimManager {
         if (c.isServer()) {
             return false;
         }
-        UUID id = p.getUniqueId();
-        return id.equals(c.owner) || c.trusted.contains(id);
+        return c.mayBuild(p.getUniqueId());
     }
 
     public long remainingMs(Claim c) {
@@ -516,7 +588,12 @@ public final class ClaimManager {
             while (it.hasNext()) {
                 Claim other = it.next();
                 target.chunks.addAll(other.chunks);
-                target.trusted.addAll(other.trusted);
+                for (var e : other.trusted.entries().entrySet()) {
+                    TrustList.Level current = target.trusted.levelOf(e.getKey());
+                    if (e.getValue().weight > current.weight) {
+                        target.trusted.set(e.getKey(), e.getValue());
+                    }
+                }
                 target.created = Math.min(target.created, other.created);
                 territories.remove(other);
             }
@@ -606,8 +683,13 @@ public final class ClaimManager {
     }
 
     public void trust(Player p, ChunkKey key, UUID target, String name) {
+        trust(p, key, target, name, null);
+    }
+
+    /** Grants (or upgrades) trust. A null level means Builder. */
+    public void trust(Player p, ChunkKey key, UUID target, String name, TrustList.Level level) {
         Claim c = byChunk.get(key);
-        if (c == null || !p.getUniqueId().equals(c.owner)) {
+        if (c == null || !c.isManager(p.getUniqueId())) {
             plugin.send(p, "not-your-claim");
             return;
         }
@@ -615,12 +697,14 @@ public final class ClaimManager {
             plugin.send(p, "trust-self");
             return;
         }
-        if (!c.trusted.add(target)) {
+        TrustList.Level level = level == null ? TrustList.Level.BUILDER : level;
+        TrustList.Level prev = c.trusted.set(target, level);
+        if (prev == level) {
             plugin.send(p, "already-trusted", "name", name);
             return;
         }
         markDirty();
-        plugin.send(p, "trust-added", "name", name);
+        plugin.send(p, "trust-added", "name", name, "level", level.id);
     }
 
     public void untrust(Player p, ChunkKey key, UUID target, String name) {
@@ -629,10 +713,98 @@ public final class ClaimManager {
             plugin.send(p, "not-your-claim");
             return;
         }
-        if (c.trusted.remove(target)) {
+        if (c.trusted.remove(target) != TrustList.Level.VISITOR) {
             markDirty();
             plugin.send(p, "trust-removed", "name", name);
         }
+    }
+
+    // --------------------------------------------------------------- settings
+
+    /**
+     * Applies a flag change, charging for it when needed.
+     *
+     * Turning a paid protection ON (protecting the territory) charges the activation
+     * fee plus the extra upkeep that protection adds from now on. Turning it OFF again
+     * (back to vanilla) is free and refunds nothing. Admins never pay.
+     *
+     * Returns true when the change was applied.
+     */
+    public boolean changeFlag(Player p, Claim c, SettingsService.Flag flag, boolean value) {
+        SettingsService svc = plugin.settings();
+        String refuse = svc.refusal(p, c, flag);
+        if (refuse != null) {
+            plugin.sendMini(p, refuse);
+            return false;
+        }
+        if (svc.get(c, flag) == value) {
+            plugin.send(p, "flag-unchanged", "flag", flag.title,
+                    "value", value ? "on" : "off");
+            return true;
+        }
+        boolean paying = flag.isPaid() && !value && svc.roleOf(p, c) != SettingsService.Role.ADMIN;
+        if (paying) {
+            // Fee, plus the upkeep the new protection will add, both in chunk-hours.
+            double fee = svc.activationFeeFor(c);
+            double extraRate = baseRate(c) * svc.upkeepMultiplier();
+            double total = fee + extraRate;
+            double mult = baseRate(c);
+            PaymentService.Result r = plugin.payments().charge(p, total / mult, mult,
+                    plugin.payments().choiceOf(p));
+            if (!r.ok()) {
+                plugin.send(p, "flag-cannot-afford", "flag", flag.title);
+                plugin.sendMini(p, r.error());
+                return false;
+            }
+        }
+        svc.set(c, flag, value);
+        markDirty();
+        plugin.send(p, "flag-changed", "flag", flag.title, "value", value ? "on" : "off");
+        return true;
+    }
+
+    /** Sets a free text value (name or messages). Managers may not rename territories. */
+    public boolean setText(Player p, Claim c, SettingsService.TextInput field, String value) {
+        SettingsService svc = plugin.settings();
+        SettingsService.Role role = svc.roleOf(p, c);
+        if (role != SettingsService.Role.ADMIN && role != SettingsService.Role.OWNER) {
+            plugin.send(p, "not-your-claim");
+            return false;
+        }
+        String v = value == null ? "" : value.trim();
+        if (v.equalsIgnoreCase("clear") || v.equalsIgnoreCase("none")) {
+            v = "";
+        }
+        switch (field) {
+            case NAME -> c.settings.customName = v;
+            case ENTRY_MESSAGE -> c.settings.entryMessage = v;
+            case LEAVE_MESSAGE -> c.settings.leaveMessage = v;
+            default -> {
+                return false;
+            }
+        }
+        markDirty();
+        plugin.send(p, "flag-changed", "flag", field.name().toLowerCase(java.util.Locale.ROOT),
+                "value", v.isEmpty() ? "(none)" : v);
+        return true;
+    }
+
+    /**
+     * When upkeep runs out, paid protections are dropped first so the territory reverts
+     * to the cheaper vanilla behaviour before it is ever unclaimed.
+     * Returns true when at least one protection was dropped.
+     */
+    public boolean dropPaidProtections(Claim c) {
+        TerritorySettings s = c.settings;
+        boolean changed = false;
+        if (!s.explosionDamage) { s.explosionDamage = true; changed = true; }
+        if (!s.pvp) { s.pvp = true; changed = true; }
+        if (!s.mobSpawning) { s.mobSpawning = true; changed = true; }
+        if (!s.fireSpread) { s.fireSpread = true; changed = true; }
+        if (changed) {
+            markDirty();
+        }
+        return changed;
     }
 
     // ------------------------------------------------------------------- admin
@@ -676,9 +848,19 @@ public final class ClaimManager {
         long grace = graceMs();
         List<Claim> dead = new ArrayList<>();
         for (Claim c : territories) {
-            if (!c.isServer() && now > c.paidUntil + grace) {
-                dead.add(c);
+            if (c.isServer() || c.paidUntil + grace >= now) {
+                continue;
             }
+            // Out of upkeep: drop paid protections first, which lowers the upkeep rate
+            // and may give the owner more time. Only unclaim when that still is not enough.
+            if (dropPaidProtections(c)) {
+                Player owner = Bukkit.getPlayer(c.owner);
+                if (owner != null) {
+                    plugin.send(owner, "protections-dropped", "name", c.displayName());
+                }
+                continue;
+            }
+            dead.add(c);
         }
         if (dead.isEmpty()) {
             return;

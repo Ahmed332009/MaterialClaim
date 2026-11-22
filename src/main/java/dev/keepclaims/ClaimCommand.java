@@ -58,6 +58,8 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
                             + " <gray>| <white>" + c.size() + " chunk(s) <gray>| " + cm.statusLine(c));
                 }
             }
+            case "flags" -> flags(p, args.length > 1 ? args[1] : null);
+            case "flag" -> flag(p, args);
             case "trust", "untrust" -> {
                 if (args.length < 2) {
                     plugin.sendMini(p, "<red>Usage: /claims " + args[0].toLowerCase(Locale.ROOT) + " <player>");
@@ -73,7 +75,8 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
                 }
                 String name = target.getName() != null ? target.getName() : args[1];
                 if (args[0].equalsIgnoreCase("trust")) {
-                    cm.trust(p, here, target.getUniqueId(), name);
+                    TrustList.Level level = args.length > 2 ? TrustList.Level.parse(args[2]) : null;
+                    cm.trust(p, here, target.getUniqueId(), name, level);
                 } else {
                     cm.untrust(p, here, target.getUniqueId(), name);
                 }
@@ -82,6 +85,134 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             default -> gui.openMain(p);
         }
         return true;
+    }
+
+    // ------------------------------------------------------------------ flags
+
+    /** Resolves the territory from the optional argument, else the chunk the player stands in. */
+    private Claim resolveTerritory(Player p, String query) {
+        ClaimManager cm = plugin.claims();
+        if (query != null && !query.isBlank()) {
+            Claim found = cm.findTerritory(query);
+            if (found == null) {
+                plugin.send(p, "territory-not-found", "query", query);
+            }
+            return found;
+        }
+        Claim here = cm.get(cm.keyOf(p.getLocation()));
+        if (here == null) {
+            plugin.send(p, "no-claim-here");
+        }
+        return here;
+    }
+
+    private void flag(Player p, String[] args) {
+        if (args.length < 3) {
+            plugin.sendMini(p, "<gray>/claims flag <flag> <value> [territory]");
+            plugin.sendMini(p, "<gray>Flags: " + flagIds());
+            return;
+        }
+        String rawFlag = args[1];
+        String value = args[2];
+        String territoryArg = args.length > 3 ? args[3] : null;
+
+        // pvp-scope and the text fields are not simple on/off flags.
+        if (rawFlag.equalsIgnoreCase("pvp-scope")) {
+            Claim c = resolveTerritory(p, territoryArg);
+            if (c == null) {
+                return;
+            }
+            SettingsService svc = plugin.settings();
+            String refuse = svc.refusal(p, c, SettingsService.Flag.PVP);
+            if (refuse != null) {
+                plugin.sendMini(p, refuse);
+                return;
+            }
+            c.settings.pvpScope = TerritorySettings.PvpScope.parse(value);
+            plugin.claims().markDirty();
+            plugin.send(p, "flag-changed", "flag", "pvpscope", "value", c.settings.pvpScope.label());
+            return;
+        }
+
+        SettingsService.TextInput field = switch (rawFlag.toLowerCase(Locale.ROOT)) {
+            case "name" -> SettingsService.TextInput.NAME;
+            case "entry-message" -> SettingsService.TextInput.ENTRY_MESSAGE;
+            case "leave-message" -> SettingsService.TextInput.LEAVE_MESSAGE;
+            default -> SettingsService.TextInput.NONE;
+        };
+        if (field != SettingsService.TextInput.NONE) {
+            Claim c = resolveTerritory(p, territoryArg);
+            if (c == null) {
+                return;
+            }
+            // Join the remaining arguments so unquoted messages work.
+            StringBuilder sb = new StringBuilder(value);
+            for (int i = 3; i < args.length; i++) {
+                sb.append(' ').append(args[i]);
+            }
+            plugin.claims().setText(p, c, field, sb.toString());
+            return;
+        }
+
+        SettingsService.Flag flag = SettingsService.Flag.parse(rawFlag);
+        if (flag == null) {
+            plugin.send(p, "flag-unknown", "flag", rawFlag);
+            return;
+        }
+        Boolean on = parseBool(value);
+        if (on == null) {
+            plugin.sendMini(p, "<red>Use on or off.");
+            return;
+        }
+        Claim c = resolveTerritory(p, territoryArg);
+        if (c == null) {
+            return;
+        }
+        plugin.claims().changeFlag(p, c, flag, on);
+    }
+
+    private static Boolean parseBool(String v) {
+        return switch (v.toLowerCase(Locale.ROOT)) {
+            case "on", "true", "yes", "allow", "allowed" -> Boolean.TRUE;
+            case "off", "false", "no", "deny", "block", "blocked" -> Boolean.FALSE;
+            default -> null;
+        };
+    }
+
+    private static String flagIds() {
+        StringBuilder sb = new StringBuilder();
+        for (SettingsService.Flag f : SettingsService.Flag.values()) {
+            if (sb.length() > 0) {
+                sb.append(", ");
+            }
+            sb.append(f.id);
+        }
+        sb.append(", pvp-scope, name, entry-message, leave-message");
+        return sb.toString();
+    }
+
+    private void flags(Player p, String territoryArg) {
+        Claim c = resolveTerritory(p, territoryArg);
+        if (c == null) {
+            return;
+        }
+        SettingsService svc = plugin.settings();
+        plugin.sendMini(p, "<gray>Settings for <white>" + plugin.escape(c.displayName())
+                + "<gray> (" + c.size() + " chunks)");
+        for (SettingsService.Flag f : SettingsService.Flag.values()) {
+            boolean value = svc.get(c, f);
+            String shown = f.isPaid()
+                    ? (value ? "<yellow>off<gray> (vanilla)" : "<green>ON<gray> (protected)")
+                    : (value ? "<green>on" : "<red>off");
+            plugin.sendMini(p, "<gray>- <white>" + f.id + "<gray>: " + shown);
+        }
+        plugin.sendMini(p, "<gray>- <white>pvp-scope<gray>: <white>" + c.settings.pvpScope.label());
+        plugin.sendMini(p, "<gray>- <white>name<gray>: <white>"
+                + plugin.escape(c.settings.customName.isBlank() ? "(none)" : c.settings.customName));
+        plugin.sendMini(p, "<gray>- <white>entry-message<gray>: <white>"
+                + plugin.escape(c.settings.entryMessage.isBlank() ? "(none)" : c.settings.entryMessage));
+        plugin.sendMini(p, "<gray>- <white>leave-message<gray>: <white>"
+                + plugin.escape(c.settings.leaveMessage.isBlank() ? "(none)" : c.settings.leaveMessage));
     }
 
     private void admin(Player p, String[] args) {
@@ -124,7 +255,8 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> out = new ArrayList<>();
         if (args.length == 1) {
-            for (String s : List.of("menu", "claim", "unclaim", "pay", "list", "borders", "info", "trust", "untrust", "admin")) {
+            for (String s : List.of("menu", "claim", "unclaim", "pay", "list", "borders", "info",
+                    "flags", "flag", "trust", "untrust", "admin")) {
                 if (s.startsWith(args[0].toLowerCase(Locale.ROOT))) {
                     out.add(s);
                 }

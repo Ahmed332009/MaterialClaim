@@ -11,5 +11,16 @@ commands:
 permissions:
   materialclaim.use:
     default: true
+    description: Use /claims and the claim menu
   materialclaim.admin:
     default: op
+    description: Admin override for claims and every territory setting
+  materialclaim.flags:
+    default: true
+    description: Change free territory toggles (owner and managers)
+  materialclaim.flags.paid:
+    default: true
+    description: Change paid protections on your own territory
+  materialclaim.flags.any:
+    default: op
+    description: Change any territory setting on any territory

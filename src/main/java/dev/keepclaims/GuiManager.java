@@ -25,12 +25,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** All chest-style menus. Actions are stored per slot as short strings like "pay:24". */
 public final class GuiManager implements Listener {
     private static final MiniMessage MM = MiniMessage.miniMessage();
 
-    enum Type { MAIN, PAY, TRUST_ADD, TRUST_LIST, MY_CLAIMS, UNCLAIM }
+    enum Type { MAIN, PAY, TRUST_ADD, TRUST_LIST, MY_CLAIMS, UNCLAIM, SETTINGS, PVP_SCOPE }
 
     static final class MenuHolder implements InventoryHolder {
         final Type type;
@@ -51,8 +52,38 @@ public final class GuiManager implements Listener {
 
     private final KeepClaims plugin;
 
+    /** Players waiting to type a territory name or message in chat. */
+    private static final Map<UUID, PendingText> PENDING = new ConcurrentHashMap<>();
+
+    record PendingText(ChunkKey key, SettingsService.TextInput field) {
+    }
+
     public GuiManager(KeepClaims plugin) {
         this.plugin = plugin;
+    }
+
+    /** True when the player is currently expected to type a value in chat. */
+    public static boolean hasPendingText(UUID id) {
+        return PENDING.containsKey(id);
+    }
+
+    /** Called by the chat listener with the typed line. Returns false when nothing was pending. */
+    public boolean completeText(Player p, String message) {
+        PendingText pending = PENDING.remove(p.getUniqueId());
+        if (pending == null) {
+            return false;
+        }
+        Claim c = plugin.claims().get(pending.key());
+        if (c == null) {
+            plugin.send(p, "no-claim-here");
+            return true;
+        }
+        plugin.claims().setText(p, c, pending.field(), message);
+        return true;
+    }
+
+    public void cancelText(UUID id) {
+        PENDING.remove(id);
     }
 
     // ----------------------------------------------------------------- helpers
@@ -139,6 +170,10 @@ public final class GuiManager implements Listener {
         return c != null && p.getUniqueId().equals(c.owner);
     }
 
+    private Claim claimAt(Player p, ChunkKey key) {
+        return plugin.claims().get(key);
+    }
+
     private void later(Runnable r) {
         Bukkit.getScheduler().runTask(plugin, r);
     }
@@ -189,6 +224,13 @@ public final class GuiManager implements Listener {
                     "<gray>Choose who can build here.", "<yellow>Click to open"), "trust_menu");
             set(inv, h, 13, item(Material.TNT, "<red>Unclaim",
                     "<gray>Gives up this chunk.", "<gray>Upkeep is not refunded."), "unclaim_menu");
+            boolean manager = c.isManager(p.getUniqueId()) || p.hasPermission("materialclaim.admin");
+            if (manager) {
+                set(inv, h, 15, item(Material.COMPARATOR, "<gold>Settings",
+                        "<gray>Protections and visitor rules.",
+                        "<gray>Paid protections: <white>" + c.settings.activePaidCount(),
+                        "<yellow>Click to open"), "settings");
+            }
         }
         set(inv, h, 12, item(Material.SPYGLASS, "<yellow>Show chunk borders",
                 "<gray>Particles show this chunk for a few seconds."), "borders");
@@ -274,7 +316,7 @@ public final class GuiManager implements Listener {
         Inventory inv = create(h, 54, "<dark_green><bold>Trust a player");
         int slot = 0;
         for (Player o : Bukkit.getOnlinePlayers()) {
-            if (o.getUniqueId().equals(p.getUniqueId()) || c.trusted.contains(o.getUniqueId())) {
+            if (o.getUniqueId().equals(p.getUniqueId()) || c.trusted.has(o.getUniqueId())) {
                 continue;
             }
             if (slot >= 45) {
@@ -352,6 +394,142 @@ public final class GuiManager implements Listener {
                     "<gray>Trusted: <white>" + c.trusted.size()), null);
         }
         set(inv, h, 49, item(Material.ARROW, "<yellow>Back"), "main");
+        fillEmpty(inv);
+        p.openInventory(inv);
+    }
+
+    // ---------------------------------------------------------------- settings
+
+    /** The Settings button on the main territory menu. */
+    public void openSettings(Player p, ChunkKey key) {
+        ClaimManager cm = plugin.claims();
+        SettingsService svc = plugin.settings();
+        Claim c = cm.get(key);
+        if (c == null) {
+            plugin.send(p, "no-claim-here");
+            return;
+        }
+        if (!c.isManager(p.getUniqueId()) && !p.hasPermission("materialclaim.admin")) {
+            plugin.send(p, "not-your-claim");
+            return;
+        }
+        MenuHolder h = new MenuHolder(Type.SETTINGS, key);
+        Inventory inv = create(h, 54, "<dark_green><bold>Territory Settings");
+
+        List<String> head = new ArrayList<>();
+        head.add("<gray>Territory: <white>" + esc(c.displayName()));
+        head.add("<gray>Chunks: <white>" + c.size());
+        head.add("<gray>Paid protections active: <white>" + c.settings.activePaidCount());
+        head.add("<gray>Upkeep rate: <white>" + trim(cm.rate(c)) + " chunk-hours/h");
+        set(inv, h, 4, item(Material.PAPER, "<gold>Settings", head), null);
+
+        set(inv, h, 0, item(Material.RED_STAINED_GLASS_PANE, "<dark_red>Paid protections",
+                "<gray>Start on. Turning one off protects the territory",
+                "<gray>and adds upkeep every cycle."), null);
+
+        int slot = 9;
+        for (SettingsService.Flag f : new SettingsService.Flag[]{
+                SettingsService.Flag.EXPLOSIONS, SettingsService.Flag.PVP,
+                SettingsService.Flag.MOB_SPAWNING, SettingsService.Flag.FIRE_SPREAD}) {
+            set(inv, h, slot++, paidItem(p, c, f), "flag:" + f.id);
+        }
+
+        set(inv, h, 18, item(Material.LIME_STAINED_GLASS_PANE, "<green>Free toggles",
+                "<gray>No cost. Managers may change these."), null);
+        slot = 19;
+        for (SettingsService.Flag f : new SettingsService.Flag[]{
+                SettingsService.Flag.VISITOR_DOORS, SettingsService.Flag.VISITOR_CONTAINERS,
+                SettingsService.Flag.VISITOR_ANIMALS, SettingsService.Flag.MOB_GRIEFING,
+                SettingsService.Flag.FLUID_FLOW, SettingsService.Flag.CROP_TRAMPLE}) {
+            set(inv, h, slot++, freeItem(p, c, f), "flag:" + f.id);
+        }
+
+        set(inv, h, 45, item(Material.NAME_TAG, "<yellow>Territory name",
+                "<gray>Current: <white>" + esc(c.settings.customName.isBlank() ? "(none)" : c.settings.customName),
+                "<yellow>Click, then type the new name in chat"), "text:NAME");
+        set(inv, h, 46, item(Material.OAK_SIGN, "<yellow>Entry message",
+                "<gray>Current: <white>" + esc(c.settings.entryMessage.isBlank() ? "(none)" : c.settings.entryMessage),
+                "<gray>Placeholders: {territory} {player}",
+                "<yellow>Click, then type it in chat"), "text:ENTRY_MESSAGE");
+        set(inv, h, 47, item(Material.OAK_SIGN, "<yellow>Leave message",
+                "<gray>Current: <white>" + esc(c.settings.leaveMessage.isBlank() ? "(none)" : c.settings.leaveMessage),
+                "<gray>Placeholders: {territory} {player}",
+                "<yellow>Click, then type it in chat"), "text:LEAVE_MESSAGE");
+        set(inv, h, 49, item(Material.ARROW, "<yellow>Back"), "main");
+        fillEmpty(inv);
+        p.openInventory(inv);
+    }
+
+    private ItemStack paidItem(Player p, Claim c, SettingsService.Flag f) {
+        SettingsService svc = plugin.settings();
+        boolean vanilla = svc.get(c, f);
+        boolean locked = svc.isLocked(f) && !p.hasPermission("materialclaim.admin");
+        Material icon = vanilla ? Material.LIME_DYE
+                : locked ? Material.BARRIER : Material.RED_DYE;
+        List<String> lore = new ArrayList<>();
+        lore.add("<gray>" + f.description);
+        lore.add("");
+        if (vanilla) {
+            lore.add("<gray>Status: <yellow>Off (vanilla behaviour)");
+            lore.add("<gray>Turn on to protect this territory.");
+            lore.add("<gray>Fee: <white>" + trim(svc.activationFee()) + " hours of items");
+            lore.add("<gray>Extra upkeep: <white>+" + Math.round(svc.upkeepMultiplier() * 100)
+                    + "% per cycle");
+            lore.add("<yellow>Click to protect");
+        } else {
+            lore.add("<gray>Status: <green>ON (protecting)");
+            lore.add("<gray>Extra upkeep already included.");
+            lore.add("<yellow>Click to turn protection off");
+        }
+        if (f == SettingsService.Flag.PVP) {
+            lore.add("<gray>PvP scope: <white>" + c.settings.pvpScope.label());
+            lore.add("<yellow>Shift-click for scope options");
+        }
+        if (locked) {
+            lore.add("<red>Locked by the server admin.");
+        }
+        return item(icon, (vanilla ? "<red>" : "<green>") + f.title, lore);
+    }
+
+    private ItemStack freeItem(Player p, Claim c, SettingsService.Flag f) {
+        SettingsService svc = plugin.settings();
+        boolean on = svc.get(c, f);
+        boolean locked = svc.isLocked(f) && !p.hasPermission("materialclaim.admin");
+        Material icon = locked ? Material.BARRIER : on ? Material.LIME_DYE : Material.GRAY_DYE;
+        List<String> lore = new ArrayList<>();
+        lore.add("<gray>" + f.description);
+        lore.add("<gray>Status: <white>" + (on ? "Allowed" : "Blocked"));
+        lore.add("<yellow>Click to toggle");
+        if (locked) {
+            lore.add("<red>Locked by the server admin.");
+        }
+        return item(icon, "<white>" + f.title, lore);
+    }
+
+    /** PvP scope sub-menu, only meaningful while PvP protection is active. */
+    public void openPvpScope(Player p, ChunkKey key) {
+        Claim c = plugin.claims().get(key);
+        if (c == null) {
+            plugin.send(p, "no-claim-here");
+            return;
+        }
+        if (!c.isManager(p.getUniqueId()) && !p.hasPermission("materialclaim.admin")) {
+            plugin.send(p, "not-your-claim");
+            return;
+        }
+        MenuHolder h = new MenuHolder(Type.PVP_SCOPE, key);
+        Inventory inv = create(h, 27, "<dark_green><bold>PvP scope");
+        set(inv, h, 4, item(Material.IRON_SWORD, "<gold>Who may PvP here",
+                "<gray>Only matters while PvP protection is ON.",
+                "<gray>Current: <white>" + c.settings.pvpScope.label()), null);
+        int slot = 10;
+        for (TerritorySettings.PvpScope scope : TerritorySettings.PvpScope.values()) {
+            boolean cur = c.settings.pvpScope == scope;
+            set(inv, h, slot++, item(cur ? Material.LIME_DYE : Material.GRAY_DYE,
+                    (cur ? "<green>" : "<white>") + scope.label(),
+                    "<yellow>Click to select"), "scope:" + scope.name());
+        }
+        set(inv, h, 22, item(Material.ARROW, "<yellow>Back"), "settings");
         fillEmpty(inv);
         p.openInventory(inv);
     }
@@ -495,6 +673,63 @@ public final class GuiManager implements Listener {
                 showBorders(p, key);
             }
             case "my_claims" -> later(() -> openMyClaims(p));
+            case "settings" -> later(() -> openSettings(p, key));
+            case "pvp_scope" -> later(() -> openPvpScope(p, key));
+            case "flag" -> {
+                SettingsService.Flag flag = SettingsService.Flag.parse(arg);
+                if (flag == null) {
+                    return;
+                }
+                // Shift-clicking PvP opens the scope sub-menu instead of toggling.
+                if (flag == SettingsService.Flag.PVP && p.isSneaking()
+                        && plugin.settings().isProtected(claimAt(p, key), flag)) {
+                    later(() -> openPvpScope(p, key));
+                    return;
+                }
+                Claim c = cm.get(key);
+                if (c == null) {
+                    return;
+                }
+                boolean newValue = !plugin.settings().get(c, flag);
+                cm.changeFlag(p, c, flag, newValue);
+                later(() -> openSettings(p, key));
+            }
+            case "scope" -> {
+                Claim c = cm.get(key);
+                if (c == null) {
+                    return;
+                }
+                SettingsService svc = plugin.settings();
+                if (!c.isManager(p.getUniqueId()) && !p.hasPermission("materialclaim.admin")) {
+                    plugin.send(p, "not-your-claim");
+                    return;
+                }
+                c.settings.pvpScope = TerritorySettings.PvpScope.parse(arg);
+                cm.markDirty();
+                plugin.send(p, "flag-changed", "flag", "pvpscope",
+                        "value", c.settings.pvpScope.label());
+                later(() -> openPvpScope(p, key));
+            }
+            case "text" -> {
+                SettingsService.TextInput field;
+                try {
+                    field = SettingsService.TextInput.valueOf(arg);
+                } catch (IllegalArgumentException ex) {
+                    return;
+                }
+                Claim c = cm.get(key);
+                if (c == null) {
+                    return;
+                }
+                SettingsService.Role role = plugin.settings().roleOf(p, c);
+                if (role != SettingsService.Role.ADMIN && role != SettingsService.Role.OWNER) {
+                    plugin.send(p, "not-your-claim");
+                    return;
+                }
+                PENDING.put(p.getUniqueId(), new PendingText(key, field));
+                p.closeInventory();
+                plugin.send(p, "text-prompt");
+            }
             default -> {
             }
         }

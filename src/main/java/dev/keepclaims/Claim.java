@@ -6,15 +6,17 @@ import java.util.UUID;
 
 /**
  * A territory: one or more connected chunks owned by one player that share one upkeep
- * clock and one trust list. owner == null means a server claim (free, never expires).
+ * clock, one trust list and one set of settings.
+ * owner == null means a server claim (free, never expires).
  */
 public final class Claim {
     public UUID owner;
     public String ownerName;
     public long created;
     public long paidUntil;
-    public final Set<UUID> trusted = new LinkedHashSet<>();
+    public final TrustList trusted = new TrustList();
     public final Set<ChunkKey> chunks = new LinkedHashSet<>();
+    public final TerritorySettings settings = new TerritorySettings();
 
     public Claim(UUID owner, String ownerName, long created, long paidUntil) {
         this.owner = owner;
@@ -29,5 +31,32 @@ public final class Claim {
 
     public int size() {
         return chunks.size();
+    }
+
+    /** Name shown to players: the custom territory name if set, else the owner name. */
+    public String displayName() {
+        return settings.displayName(ownerName);
+    }
+
+    /** True when this player may build here (owner, builder or manager). */
+    public boolean mayBuild(UUID id) {
+        if (isServer()) {
+            return false;
+        }
+        if (id.equals(owner)) {
+            return true;
+        }
+        return trusted.levelOf(id).weight >= TrustList.Level.BUILDER.weight;
+    }
+
+    /** True when this player may change free settings and pay upkeep. */
+    public boolean isManager(UUID id) {
+        if (isServer()) {
+            return false;
+        }
+        if (id.equals(owner)) {
+            return true;
+        }
+        return trusted.levelOf(id).weight >= TrustList.Level.MANAGER.weight;
     }
 }

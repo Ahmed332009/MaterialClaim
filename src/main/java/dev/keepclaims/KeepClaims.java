@@ -17,11 +17,13 @@ public final class KeepClaims extends JavaPlugin {
     private ClaimManager claims;
     private PaymentService payments;
     private GuiManager gui;
+    private SettingsService settings;
     private final Set<UUID> bypassing = ConcurrentHashMap.newKeySet();
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        settings = new SettingsService(this);
         payments = new PaymentService(this);
         claims = new ClaimManager(this);
         gui = new GuiManager(this);
@@ -31,6 +33,7 @@ public final class KeepClaims extends JavaPlugin {
 
         getServer().getPluginManager().registerEvents(new ProtectionListener(this), this);
         getServer().getPluginManager().registerEvents(gui, this);
+        getServer().getPluginManager().registerEvents(new ChatInputListener(this, gui), this);
 
         ClaimCommand command = new ClaimCommand(this);
         PluginCommand pc = getCommand("claims");
@@ -52,6 +55,7 @@ public final class KeepClaims extends JavaPlugin {
 
     public void reloadAll() {
         reloadConfig();
+        settings.reload();
         payments.reload();
         claims.reloadSettings();
     }
@@ -66,6 +70,10 @@ public final class KeepClaims extends JavaPlugin {
 
     public GuiManager gui() {
         return gui;
+    }
+
+    public SettingsService settings() {
+        return settings;
     }
 
     public Set<UUID> bypassing() {
@@ -104,6 +112,21 @@ public final class KeepClaims extends JavaPlugin {
     /** Sends a ready-made MiniMessage string with the prefix. */
     public void sendMini(CommandSender to, String mini) {
         to.sendMessage(MM.deserialize(prefix() + mini));
+    }
+
+    /** Sends a raw (unprefixed) MiniMessage string, for player-authored messages. */
+    public void sendRaw(CommandSender to, String mini) {
+        to.sendMessage(MM.deserialize(mini));
+    }
+
+    /** Parses a MiniMessage string, for menus that need a Component. */
+    public net.kyori.adventure.text.Component mm(String mini) {
+        return MM.deserialize(mini);
+    }
+
+    /** Escapes MiniMessage tags so player-supplied text cannot inject formatting. */
+    public String escape(String raw) {
+        return MM.escapeTags(raw == null ? "" : raw);
     }
 
     public void actionBar(Player p, String key, String... kv) {

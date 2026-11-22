@@ -67,6 +67,33 @@ public-blocks:
   - STONECUTTER
   - SMITHING_TABLE
 
+# Per-territory settings.
+#
+# Paid protections start ON (true = vanilla behaviour still happens). Turning one OFF
+# protects the territory and costs the owner: a one-time activation fee, plus a permanent
+# percentage increase in that territory's upkeep every cycle.
+#
+# Free toggles never cost anything. true = visitors are allowed to do that thing.
+territory-settings:
+  # Each active paid protection adds this fraction to the territory's upkeep.
+  paid-protection-upkeep-multiplier: 0.25
+  # One-time fee to turn a paid protection on, in hours of item value.
+  paid-protection-activation-fee: 100.0
+  defaults:
+    explosion-damage: true      # true = vanilla (not protected)
+    pvp: true
+    mob-spawning: true
+    fire-spread: true
+    visitor-doors: false
+    visitor-containers: false
+    visitor-animals: false
+    mob-griefing: true
+    fluid-flow: true
+    crop-trample: true
+  # Admin can lock flags so players cannot change them. Set true to lock server-wide.
+  locked:
+    fire-spread: false
+
 # Messages use MiniMessage formatting.
 messages:
   prefix: "<dark_green>[Claims]</dark_green> "
@@ -99,3 +126,12 @@ messages:
   bypass-off: "<yellow>Claim bypass disabled."
   server-claimed: "<green>Claimed {count} chunk(s) for the server."
   admin-unclaimed: "<yellow>The whole connected territory was removed."
+  flag-changed: "<green>{flag} is now {value}."
+  flag-unchanged: "<yellow>{flag} is already {value}."
+  flag-cannot-afford: "<red>You cannot afford the fee for {flag}. The protection was not enabled."
+  flag-locked: "<red>That setting is locked by the server admin."
+  flag-manager-paid: "<red>Only the owner can change paid protections."
+  flag-unknown: "<red>Unknown flag: {flag}."
+  territory-not-found: "<red>No territory found for {query}."
+  protections-dropped: "<red>{name} ran out of upkeep, so its paid protections were switched off. Pay upkeep to restore them."
+  text-prompt: "<yellow>Type the new value in chat, or type cancel."

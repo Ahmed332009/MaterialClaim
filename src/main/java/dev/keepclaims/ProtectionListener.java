@@ -2,6 +2,7 @@ package dev.keepclaims;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.Location;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.entity.AbstractVillager;
@@ -28,6 +29,8 @@ import org.bukkit.event.block.BlockIgniteEvent;
 import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPistonRetractEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.block.BlockSpreadEvent;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
@@ -39,6 +42,8 @@ import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.vehicle.VehicleEnterEvent;
 import org.bukkit.projectiles.ProjectileSource;
 
@@ -57,6 +62,18 @@ public final class ProtectionListener implements Listener {
     public ProtectionListener(KeepClaims plugin) {
         this.plugin = plugin;
         this.claims = plugin.claims();
+    }
+
+    /** Last territory each player stood in, for entry/leave messages. */
+    private final Map<UUID, Claim> lastTerritory = new ConcurrentHashMap<>();
+
+    private SettingsService settings() {
+        return plugin.settings();
+    }
+
+    /** True when this territory has the given paid protection active. */
+    private boolean protectedBy(Claim c, SettingsService.Flag flag) {
+        return c != null && settings().isProtected(c, flag);
     }
 
     // ----------------------------------------------------------------- helpers
@@ -112,6 +129,45 @@ public final class ProtectionListener implements Listener {
         return plugin.getConfig().getStringList("public-blocks").contains(m.name());
     }
 
+    private static final Set<Material> DOOR_LIKE = EnumSet.of(
+            Material.OAK_DOOR, Material.SPRUCE_DOOR, Material.BIRCH_DOOR, Material.JUNGLE_DOOR,
+            Material.ACACIA_DOOR, Material.DARK_OAK_DOOR, Material.MANGROVE_DOOR,
+            Material.CHERRY_DOOR, Material.BAMBOO_DOOR, Material.CRIMSON_DOOR, Material.WARPED_DOOR,
+            Material.OAK_FENCE_GATE, Material.SPRUCE_FENCE_GATE, Material.BIRCH_FENCE_GATE,
+            Material.JUNGLE_FENCE_GATE, Material.ACACIA_FENCE_GATE, Material.DARK_OAK_FENCE_GATE,
+            Material.MANGROVE_FENCE_GATE, Material.CHERRY_FENCE_GATE, Material.BAMBOO_FENCE_GATE,
+            Material.CRIMSON_FENCE_GATE, Material.WARPED_FENCE_GATE,
+            Material.LEVER);
+
+    /**
+     * Whether a visitor may use this interactive block, based on the territory's free
+     * VISITOR_DOORS / VISITOR_CONTAINERS toggles. Anything that is not a door-like or
+     * container block stays blocked for visitors.
+     */
+    private boolean visitorMayInteract(Claim c, Material m) {
+        boolean doorLike = DOOR_LIKE.contains(m)
+                || m.name().endsWith("_DOOR")
+                || m.name().endsWith("_FENCE_GATE")
+                || m.name().endsWith("_BUTTON")
+                || m.name().endsWith("_TRAPDOOR")
+                || m == Material.BARREL || m == Material.CHEST || m == Material.TRAPPED_CHEST
+                || m == Material.HOPPER || m == Material.DROPPER || m == Material.DISPENSER
+                || m == Material.FURNACE || m == Material.BLAST_FURNACE || m == Material.SMOKER
+                || m == Material.BREWING_STAND || m == Material.SHULKER_BOX
+                || m == Material.LECTERN;
+        if (!doorLike) {
+            return false;
+        }
+        boolean container = m == Material.BARREL || m == Material.CHEST || m == Material.TRAPPED_CHEST
+                || m == Material.HOPPER || m == Material.DROPPER || m == Material.DISPENSER
+                || m == Material.FURNACE || m == Material.BLAST_FURNACE || m == Material.SMOKER
+                || m == Material.BREWING_STAND || m == Material.SHULKER_BOX
+                || m == Material.LECTERN;
+        return container
+                ? settings().get(c, SettingsService.Flag.VISITOR_CONTAINERS)
+                : settings().get(c, SettingsService.Flag.VISITOR_DOORS);
+    }
+
     private static final Set<Material> BLOCK_ITEMS = EnumSet.of(Material.BONE_MEAL, Material.FLINT_AND_STEEL,
             Material.FIRE_CHARGE, Material.BRUSH, Material.SHEARS, Material.END_CRYSTAL, Material.ARMOR_STAND,
             Material.ENDER_EYE, Material.GLASS_BOTTLE);
@@ -163,8 +219,11 @@ public final class ProtectionListener implements Listener {
         }
         boolean blocked = false;
         if (b.getType().isInteractable() && !isPublic(b.getType())) {
-            e.setUseInteractedBlock(Event.Result.DENY);
-            blocked = true;
+            // Visitors may be allowed to use doors/buttons/levers, or containers.
+            if (!visitorMayInteract(c, b.getType())) {
+                e.setUseInteractedBlock(Event.Result.DENY);
+                blocked = true;
+            }
         }
         if (e.getItem() != null && actsOnBlocks(e.getItem().getType())) {
             e.setUseItemInHand(Event.Result.DENY);
@@ -198,10 +257,38 @@ public final class ProtectionListener implements Listener {
             return;
         }
         Claim c = claims.at(target.getLocation());
-        if (!claims.allowed(e.getPlayer(), c)) {
-            deny(e.getPlayer(), c);
-            e.setCancelled(true);
+        if (c == null || claims.allowed(e.getPlayer(), c)) {
+            return;
         }
+        // Visitors may be allowed to handle animals and vehicles.
+        boolean animal = target instanceof Animals || target instanceof org.bukkit.entity.Vehicle;
+        if (animal && settings().get(c, SettingsService.Flag.VISITOR_ANIMALS)) {
+            return;
+        }
+        deny(e.getPlayer(), c);
+        e.setCancelled(true);
+    }
+
+    /** Damaging, leashing or mounting an animal follows the same visitor toggle. */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onAnimalDamage(EntityDamageByEntityEvent e) {
+        Entity victim = e.getEntity();
+        if (!(victim instanceof Animals || victim instanceof org.bukkit.entity.Vehicle)) {
+            return;
+        }
+        Player attacker = playerFrom(e.getDamager());
+        if (attacker == null) {
+            return;
+        }
+        Claim c = claims.at(victim.getLocation());
+        if (c == null || claims.allowed(attacker, c)) {
+            return;
+        }
+        if (settings().get(c, SettingsService.Flag.VISITOR_ANIMALS)) {
+            return;
+        }
+        deny(attacker, c);
+        e.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -241,6 +328,37 @@ public final class ProtectionListener implements Listener {
         }
     }
 
+    /**
+     * PvP protection. When PVP is off (protected and paid for), the territory's scope
+     * decides who may still fight inside it.
+     */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onPvp(EntityDamageByEntityEvent e) {
+        if (!(e.getEntity() instanceof Player victim)) {
+            return;
+        }
+        Player attacker = playerFrom(e.getDamager());
+        if (attacker == null || attacker.equals(victim)) {
+            return;
+        }
+        Claim c = claims.at(victim.getLocation());
+        if (!protectedBy(c, SettingsService.Flag.PVP)) {
+            return;
+        }
+        boolean allowed = switch (c.settings.pvpScope) {
+            case EVERYONE -> true;
+            case VISITORS_ONLY -> !c.mayBuild(attacker.getUniqueId())
+                    && !c.mayBuild(victim.getUniqueId());
+            case TRUSTED_ONLY -> c.mayBuild(attacker.getUniqueId())
+                    && c.mayBuild(victim.getUniqueId());
+            case NOBODY -> false;
+        };
+        if (!allowed) {
+            e.setCancelled(true);
+            deny(attacker, c);
+        }
+    }
+
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onHangingPlace(HangingPlaceEvent e) {
         Player p = e.getPlayer();
@@ -269,31 +387,83 @@ public final class ProtectionListener implements Listener {
         }
     }
 
+    /**
+     * Mob griefing (endermen, withers, ...) and crop trampling. A player changing a
+     * block (trampling farmland) is governed by CROP_TRAMPLE; a mob is governed by
+     * MOB_GRIEFING.
+     */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onEntityChangeBlock(EntityChangeBlockEvent e) {
-        if (e.getEntity() instanceof Player || e.getEntity() instanceof FallingBlock) {
+        if (e.getEntity() instanceof FallingBlock) {
             return;
         }
-        if (claims.at(e.getBlock()) != null) {
+        Claim c = claims.at(e.getBlock());
+        if (c == null) {
+            return;
+        }
+        if (e.getEntity() instanceof Player p) {
+            // Farmland turning to dirt under a player is a trample.
+            if (e.getBlock().getType() != Material.FARMLAND) {
+                return;
+            }
+            if (settings().get(c, SettingsService.Flag.CROP_TRAMPLE)) {
+                return;
+            }
+            if (c.mayBuild(p.getUniqueId())) {
+                return;
+            }
+            e.setCancelled(true);
+            deny(p, c);
+            return;
+        }
+        if (!settings().get(c, SettingsService.Flag.MOB_GRIEFING)) {
             e.setCancelled(true);
         }
     }
 
     // ------------------------------------------------- explosions, fire, fluids
 
+    /**
+     * Explosions only damage a block if the territory that owns that block has
+     * EXPLOSION_DAMAGE protection off. Each block is judged by its own territory, so
+     * a neighbour with the protection active is never damaged regardless of where the
+     * explosion came from.
+     */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onEntityExplode(EntityExplodeEvent e) {
-        e.blockList().removeIf(b -> claims.at(b) != null);
+        e.blockList().removeIf(b -> protectedBy(claims.at(b), SettingsService.Flag.EXPLOSIONS));
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBlockExplode(BlockExplodeEvent e) {
-        e.blockList().removeIf(b -> claims.at(b) != null);
+        e.blockList().removeIf(b -> protectedBy(claims.at(b), SettingsService.Flag.EXPLOSIONS));
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onBurn(BlockBurnEvent e) {
-        if (claims.at(e.getBlock()) != null) {
+        if (protectedBy(claims.at(e.getBlock()), SettingsService.Flag.FIRE_SPREAD)) {
+            e.setCancelled(true);
+        }
+    }
+
+    /** Fire spreading into a territory that has FIRE_SPREAD protection active. */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onSpread(BlockSpreadEvent e) {
+        if (e.getNewState().getType() != Material.FIRE) {
+            return;
+        }
+        if (protectedBy(claims.at(e.getBlock()), SettingsService.Flag.FIRE_SPREAD)) {
+            e.setCancelled(true);
+        }
+    }
+
+    /** Hostile mobs may not spawn inside a territory that has MOB_SPAWNING protection. */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onCreatureSpawn(CreatureSpawnEvent e) {
+        if (!e.getEntityType().getCategory().isHostile()) {
+            return;
+        }
+        if (protectedBy(claims.at(e.getLocation()), SettingsService.Flag.MOB_SPAWNING)) {
             e.setCancelled(true);
         }
     }
@@ -317,6 +487,10 @@ public final class ProtectionListener implements Listener {
     public void onFlow(BlockFromToEvent e) {
         Claim to = claims.at(e.getToBlock());
         if (to == null) {
+            return;
+        }
+        // A territory that allows fluid flow accepts fluids from anywhere.
+        if (settings().get(to, SettingsService.Flag.FLUID_FLOW)) {
             return;
         }
         Claim from = claims.at(e.getBlock());
@@ -353,6 +527,54 @@ public final class ProtectionListener implements Listener {
     }
 
     // -------------------------------------------------------------------- join
+
+    // ------------------------------------------------------ entry/leave messages
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onMove(PlayerMoveEvent e) {
+        Location from = e.getFrom();
+        Location to = e.getTo();
+        if (to == null) {
+            return;
+        }
+        // Only re-check when the player actually changed chunk.
+        if ((from.getBlockX() >> 4) == (to.getBlockX() >> 4)
+                && (from.getBlockZ() >> 4) == (to.getBlockZ() >> 4)
+                && from.getWorld() == to.getWorld()) {
+            return;
+        }
+        Player p = e.getPlayer();
+        UUID id = p.getUniqueId();
+        Claim now = claims.at(to);
+        Claim before = lastTerritory.get(id);
+        if (before == now) {
+            return;
+        }
+        if (now == null) {
+            lastTerritory.remove(id);
+        } else {
+            lastTerritory.put(id, now);
+        }
+        if (before != null && !before.settings.leaveMessage.isBlank()) {
+            String msg = before.settings.leaveMessage
+                    .replace("{territory}", before.displayName())
+                    .replace("{player}", p.getName());
+            plugin.sendRaw(p, msg);
+        }
+        if (now != null && !now.settings.entryMessage.isBlank()) {
+            String msg = now.settings.entryMessage
+                    .replace("{territory}", now.displayName())
+                    .replace("{player}", p.getName());
+            plugin.sendRaw(p, msg);
+        }
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent e) {
+        UUID id = e.getPlayer().getUniqueId();
+        lastTerritory.remove(id);
+        denyCooldown.remove(id);
+    }
 
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
