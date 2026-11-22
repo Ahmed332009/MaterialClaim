@@ -1,0 +1,13 @@
+Hi Claude. I am continuing a project that another Claude account started with me.
+
+I am uploading a zip called MaterialClaim-source-v0.2.0.zip. Unzip it, read HANDOFF.md first (it has the full state, decisions, server details and open tasks), then read the source files.
+
+The project: MaterialClaim, a custom Paper plugin for my Minecraft server (Paper 26.3, Java 25, Geyser and Floodgate, Bedrock and Java players). It is a chunk-claim plugin where connected chunks form one territory (one payment, one upkeep clock), with a chest-menu GUI, no economy plugin, and upkeep paid with items of different values (copper, iron, gold, diamond, netherite). Claims run out of upkeep, get a grace period, then are removed.
+
+Rules:
+- Write original code only. Do not copy DiamondClaims.
+- I use a phone, so give short step-by-step instructions.
+- Be honest about what has not been compiled or tested.
+- When you deliver files, also give me an updated HANDOFF.md and CONTINUE_PROMPT.txt.
+
+Where we are: version 0.2.0 adds connected territories. The GUI already works on Bedrock in version 0.1.x. My next step is to build 0.2.0 with GitHub Actions and test the territory features, then paste you any errors. Start by confirming you have read HANDOFF.md, then tell me the next step.

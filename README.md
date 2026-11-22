@@ -1,78 +1,37 @@
 # MaterialClaim
 
-A land claim plugin for Paper 1.21+ servers. No economy plugin, no Vault, no diamonds-only system. Players claim chunks and pay upkeep with Minecraft materials. Claims run out if not maintained and are eventually removed.
+Chunk claims paid with items. No economy plugin needed. Includes a chest-menu GUI that also works for Bedrock players through Geyser.
 
-## Features
+STATUS: GUI tested on Java and Bedrock in version 0.1.x. Version 0.2.0 territories are new and untested.
 
-- Chest-style GUI menu, works for Bedrock players through Geyser
-- Multiple payment materials: copper, iron, gold, diamond, netherite (each worth different upkeep time)
-- Claims expire: upkeep runs out, grace period, then the claim is deleted
-- Cost tiers: first few claims are cheaper, many claims get more expensive
-- No economy plugin required
-- Admin tools: bypass mode, server claims, force unclaim, reload
-- Trust system: grant other players build access per claim
-- Chunk border visualizer
+## How players use it
+- /claims opens the menu (also /claim and /kc).
+- Chunks that touch each other (sides) form ONE territory: one payment, one upkeep clock, one trust list. Upkeep grows with the number of chunks.
+- You can only unclaim a chunk if your territory stays connected.
+- Stand in a chunk and click "Claim this chunk". You pay with copper, iron, gold, diamond or netherite (or their blocks).
+- "Pay upkeep" adds time. Pick which item to pay with, or leave it on Automatic (cheapest first).
+- "Trusted players" lets friends build in your claim.
+- When upkeep runs out the claim keeps protecting for a grace period, then it is removed.
 
-## Requirements
+## Build it from a phone (GitHub Actions)
+1. Unzip the download in your Files app.
+2. On github.com create a new repository (public or private).
+3. Tap Add file, then Upload files. Select every file from the unzipped folder and commit.
+4. Tap Add file, then Create new file. Name it exactly: .github/workflows/build.yml
+   Open build.yml from the unzipped folder, copy all of its text and paste it in. Commit.
+5. Open the Actions tab. The "Build MaterialClaim" run starts by itself (or tap Run workflow).
+6. When it shows a green tick, open the run and download the artifact "MaterialClaim-jar". Unzip it to get MaterialClaim-0.2.0.jar.
+7. If the run is red, open it, copy the error text and send it to Claude.
 
-- Paper 1.21.1 or newer
-- Java 21 or newer
-- Geyser + Floodgate (optional, for Bedrock support)
+## Install on the server
+1. Stop the server.
+2. Upload MaterialClaim-0.2.0.jar to the plugins folder.
+3. Do NOT run it together with DiamondClaims for long: both use the /claim command and both protect chunks. Your old DiamondClaims claims are not imported yet.
+4. Start the server and edit plugins/MaterialClaim/config.yml if you want different prices.
+5. After editing, run /claims admin reload.
 
-## Installation
-
-1. Download the latest `KeepClaims.jar` from [Releases](../../releases)
-2. Place it in your server's `plugins/` folder
-3. Restart the server
-4. Edit `plugins/KeepClaims/config.yml` to your liking
-5. Run `/claims admin reload` to apply config changes without a restart
-
-## Commands
-
-| Command | Description |
-|---|---|
-| `/claims` | Open the main menu |
-| `/claims info` | Show claim info for the chunk you stand in |
-| `/claims borders` | Show chunk border particles |
-| `/claims trust <player>` | Trust a player in this claim |
-| `/claims untrust <player>` | Remove trust |
-| `/claims list` | See all your claims |
-| `/claims admin bypass` | Toggle bypass mode (admin) |
-| `/claims admin serverclaim [radius]` | Make permanent server claims (admin) |
-| `/claims admin unclaim` | Force remove a claim (admin) |
-| `/claims admin reload` | Reload config (admin) |
-
-## Permissions
-
-| Permission | Default | Description |
-|---|---|---|
-| `keepclaims.use` | Everyone | Use claims |
-| `keepclaims.admin` | OP | Admin commands |
-| `keepclaims.limit.<n>` | — | Set a player's max claims to n |
-
-## Payment Materials (default)
-
-| Material | Upkeep per chunk |
-|---|---|
-| Copper Ingot | 4 hours |
-| Iron Ingot | 6 hours |
-| Gold Ingot | 8 hours |
-| Diamond | 72 hours (3 days) |
-| Netherite Ingot | 240 hours (10 days) |
-
-Blocks count as 9x the ingot value. All values are configurable.
-
-## Configuration
-
-All settings are in `plugins/KeepClaims/config.yml`. Key options:
-
-- `initial-hours` — upkeep cost to claim a chunk (default 168 = 1 week)
-- `max-prepaid-days` — maximum time a player can bank per claim (default 30)
-- `grace-days` — how long after expiry before the claim is deleted (default 7)
-- `cost-tiers` — multipliers based on how many claims a player has
-- `enabled-worlds` — restrict claiming to specific worlds
-- `public-blocks` — blocks anyone can use inside claims
-
-## License
-
-GPL-3.0 — see [LICENSE](LICENSE)
+## Admin
+- /claims admin bypass  toggles building anywhere
+- /claims admin serverclaim [radius]  protects chunks for the server (spawn, shops)
+- /claims admin unclaim  removes the claim you are standing in
+- Permission materialclaim.limit.<number> raises a player's claim limit

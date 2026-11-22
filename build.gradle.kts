@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "dev.keepclaims"
-version = "0.1.0"
+version = "0.2.0"
 
 repositories {
     mavenCentral()
@@ -19,9 +19,19 @@ java {
     toolchain.languageVersion.set(JavaLanguageVersion.of(21))
 }
 
-// Standard Maven layout: sources in src/main/java, resources in src/main/resources.
-// Do NOT override sourceSets here. A previous version pointed them at the repository
-// root, which matched no .java files and produced an empty, unusable jar.
+// Flat layout: all files sit in the repository root so they can be uploaded from a phone.
+sourceSets {
+    main {
+        java {
+            setSrcDirs(listOf("."))
+            include("*.java")
+        }
+        resources {
+            setSrcDirs(listOf("."))
+            include("plugin.yml", "config.yml")
+        }
+    }
+}
 
 tasks.processResources {
     filesMatching("plugin.yml") {
@@ -30,5 +40,5 @@ tasks.processResources {
 }
 
 tasks.jar {
-    archiveBaseName.set("KeepClaims")
+    archiveBaseName.set("MaterialClaim")
 }
