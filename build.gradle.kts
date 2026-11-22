@@ -19,19 +19,10 @@ java {
     toolchain.languageVersion.set(JavaLanguageVersion.of(21))
 }
 
-// Flat layout: all files sit in the repository root so they can be uploaded from a phone.
-sourceSets {
-    main {
-        java {
-            setSrcDirs(listOf("."))
-            include("*.java")
-        }
-        resources {
-            setSrcDirs(listOf("."))
-            include("plugin.yml", "config.yml")
-        }
-    }
-}
+// Standard Maven layout: sources in src/main/java, resources in src/main/resources.
+// Do NOT point sourceSets at the repository root. The root copies are only the phone-upload
+// staging area; the real sources live under src/. Overriding sourceSets to "." makes Gradle
+// compile the stale root copies instead and drop plugin.yml from the jar.
 
 tasks.processResources {
     filesMatching("plugin.yml") {

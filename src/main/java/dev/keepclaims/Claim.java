@@ -4,17 +4,19 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 
-/** One claimed chunk. owner == null means a server claim (free, never expires). */
+/**
+ * A territory: one or more connected chunks owned by one player that share one upkeep
+ * clock and one trust list. owner == null means a server claim (free, never expires).
+ */
 public final class Claim {
-    public final ChunkKey key;
     public UUID owner;
     public String ownerName;
-    public final long created;
+    public long created;
     public long paidUntil;
     public final Set<UUID> trusted = new LinkedHashSet<>();
+    public final Set<ChunkKey> chunks = new LinkedHashSet<>();
 
-    public Claim(ChunkKey key, UUID owner, String ownerName, long created, long paidUntil) {
-        this.key = key;
+    public Claim(UUID owner, String ownerName, long created, long paidUntil) {
         this.owner = owner;
         this.ownerName = ownerName;
         this.created = created;
@@ -23,5 +25,9 @@ public final class Claim {
 
     public boolean isServer() {
         return owner == null;
+    }
+
+    public int size() {
+        return chunks.size();
     }
 }

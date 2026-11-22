@@ -9,7 +9,7 @@ commands:
     description: Land claims menu
     usage: /claims
 permissions:
-  keepclaims.use:
+  materialclaim.use:
     default: true
-  keepclaims.admin:
+  materialclaim.admin:
     default: op

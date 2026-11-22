@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** All chest-style menus. Actions are stored per slot as short strings like "pay:24". */
@@ -159,25 +160,28 @@ public final class GuiManager implements Listener {
         } else {
             info.add("<gray>Owner: <white>" + esc(c.isServer() ? "Server" : c.ownerName));
             info.add("<gray>Status: " + cm.statusLine(c));
+            info.add("<gray>Territory: <white>" + c.size() + " chunk(s)");
             info.add("<gray>Trusted players: <white>" + c.trusted.size());
         }
         set(inv, h, 4, item(Material.PAPER, "<gold>Chunk " + key.x() + ", " + key.z(), info), null);
 
         if (c == null) {
-            List<Claim> mine = cm.byOwner(p.getUniqueId());
-            double mult = cm.multiplierFor(mine.size() + 1);
-            // The charge is clamped to the prepaid cap, so show the clamped price.
-            double maxInitial = cm.maxPrepaidHours();
-            double initial = Math.min(plugin.getConfig().getDouble("initial-hours", 168), maxInitial);
-            double raw = initial * mult;
+            Set<Claim> adjacent = cm.adjacentOwned(p.getUniqueId(), key);
+            int sizeAfter = 1;
+            for (Claim a : adjacent) {
+                sizeAfter += a.size();
+            }
+            double raw = plugin.getConfig().getDouble("initial-hours", 96);
             Material choice = pay.choiceOf(p);
             List<String> lore = new ArrayList<>();
-            lore.add("<gray>Claims used: <white>" + mine.size() + "/" + cm.limitFor(p));
+            lore.add("<gray>Territory size after: <white>" + sizeAfter + " chunk(s)");
+            lore.add("<gray>Chunks used: <white>" + cm.ownedChunks(p.getUniqueId()) + "/" + cm.limitFor(p));
             lore.add("<gray>Paying with: <white>" + (choice == null ? "cheapest items first" : Util.pretty(choice)));
-            lore.add("<gray>Cost, pick one kind of item:");
+            lore.add("<gray>Price, pick one kind of item:");
             lore.addAll(pay.costLines(raw));
             lore.add("<yellow>Click to claim");
-            set(inv, h, 10, item(Material.GRASS_BLOCK, "<green>Claim this chunk", lore), "claim");
+            String title = adjacent.isEmpty() ? "<green>Claim this chunk" : "<green>Add this chunk to your territory";
+            set(inv, h, 10, item(Material.GRASS_BLOCK, title, lore), "claim");
         } else if (isOwner(p, c)) {
             set(inv, h, 10, item(Material.DIAMOND, "<aqua>Pay upkeep",
                     "<gray>Add time to this claim.", "<yellow>Click to open"), "pay_menu");
@@ -204,39 +208,29 @@ public final class GuiManager implements Listener {
             plugin.send(p, "not-your-claim");
             return;
         }
-        double mult = cm.multiplierFor(cm.ordinalOf(c));
+        double mult = cm.rate(c);
         Material choice = pay.choiceOf(p);
         MenuHolder h = new MenuHolder(Type.PAY, key);
         Inventory inv = create(h, 36, "<dark_green><bold>Pay upkeep");
 
-        set(inv, h, 4, item(Material.CLOCK, "<gold>Chunk " + key.x() + ", " + key.z(),
+        set(inv, h, 4, item(Material.CLOCK, "<gold>Territory of " + c.size() + " chunk(s)",
                 "<gray>Status: " + cm.statusLine(c),
+                "<gray>Payment covers the whole territory.",
                 "<gray>Paying with: <white>" + (choice == null ? "cheapest items first" : Util.pretty(choice))), null);
-
-        // How much upkeep this claim can still take before the prepaid cap.
-        double room = cm.roomHours(c);
-        infoAddRoom(inv, room);
 
         double[] hours = {24, 72, 168, 336, 0};
         String[] names = {"+1 day", "+3 days", "+7 days", "+14 days", "Fill to maximum"};
         for (int i = 0; i < hours.length; i++) {
             List<String> lore = new ArrayList<>();
-            // Never advertise more than the claim can actually hold: the charge is
-            // shrunk to fit, so showing the unclamped cost would overstate the price.
-            double want = hours[i] > 0 ? Math.min(hours[i], room) : room;
-            if (hours[i] > 0 && want + 1e-9 < hours[i]) {
-                lore.add("<red>Only " + Util.duration((long) (want * 3_600_000L))
-                        + " of room left on this claim.");
-            }
-            if (want <= 1e-9) {
-                lore.add("<red>No room left for more upkeep.");
-            } else if (choice != null) {
-                int n = (int) Math.ceil(want * mult / pay.valueOf(choice) - 1e-9);
+            if (hours[i] > 0 && choice != null) {
+                int n = (int) Math.ceil(hours[i] * mult / pay.valueOf(choice) - 1e-9);
                 lore.add("<gray>Cost: <white>" + Math.max(1, n) + "x " + Util.pretty(choice));
                 lore.add("<gray>You have: <white>" + pay.count(p, choice));
-            } else {
+            } else if (hours[i] > 0) {
                 lore.add("<gray>Cost, pick one kind of item:");
-                lore.addAll(pay.costLines(want * mult));
+                lore.addAll(pay.costLines(hours[i] * mult));
+            } else {
+                lore.add("<gray>Pays up to the maximum prepaid time.");
             }
             lore.add("<yellow>Click to pay");
             String action = hours[i] > 0 ? "pay:" + (int) hours[i] : "pay:max";
@@ -253,7 +247,7 @@ public final class GuiManager implements Listener {
             }
             Material m = e.getKey();
             ItemStack it = item(m, "<white>" + Util.pretty(m),
-                    "<gray>Worth: <white>" + trim(e.getValue() / mult) + " hours <gray>of upkeep here",
+                    "<gray>Worth: <white>" + trim(e.getValue() / mult) + " hours <gray>for this territory",
                     "<gray>You have: <white>" + pay.count(p, m),
                     m == choice ? "<green>Selected" : "<yellow>Click to pay with this item");
             set(inv, h, slot++, m == choice ? glow(it) : it, "choose:" + m.name());
@@ -261,20 +255,6 @@ public final class GuiManager implements Listener {
         set(inv, h, 35, item(Material.ARROW, "<yellow>Back"), "main");
         fillEmpty(inv);
         p.openInventory(inv);
-    }
-
-    /** Adds the remaining-room line to the item already sitting in the info slot. */
-    private void infoAddRoom(Inventory inv, double roomHours) {
-        ItemStack it = inv.getItem(4);
-        if (it == null || it.getItemMeta() == null) {
-            return;
-        }
-        ItemMeta meta = it.getItemMeta();
-        List<Component> lore = meta.lore() == null ? new ArrayList<>() : new ArrayList<>(meta.lore());
-        lore.add(mm("<gray>Room left: <white>" + Util.duration((long) (roomHours * 3_600_000L))));
-        meta.lore(lore);
-        it.setItemMeta(meta);
-        inv.setItem(4, it);
     }
 
     private String trim(double v) {
@@ -343,7 +323,8 @@ public final class GuiManager implements Listener {
         MenuHolder h = new MenuHolder(Type.UNCLAIM, key);
         Inventory inv = create(h, 27, "<dark_red><bold>Unclaim this chunk?");
         set(inv, h, 11, item(Material.RED_CONCRETE, "<red>Yes, unclaim",
-                "<gray>Chunk " + key.x() + ", " + key.z(), "<gray>Remaining upkeep is lost."), "unclaim_confirm");
+                "<gray>Chunk " + key.x() + ", " + key.z(), "<gray>Blocked if it would split your territory.",
+                "<gray>No refund is given."), "unclaim_confirm");
         set(inv, h, 15, item(Material.LIME_CONCRETE, "<green>No, keep it"), "main");
         fillEmpty(inv);
         p.openInventory(inv);
@@ -360,11 +341,13 @@ public final class GuiManager implements Listener {
             if (slot >= 45) {
                 break;
             }
+            ChunkKey first = c.chunks.iterator().next();
             long left = cm.remainingMs(c);
             Material icon = left > warn ? Material.LIME_CONCRETE : left > 0 ? Material.YELLOW_CONCRETE : Material.RED_CONCRETE;
-            set(inv, h, slot++, item(icon, "<gold>Chunk " + c.key.x() + ", " + c.key.z(),
-                    "<gray>World: <white>" + esc(cm.worldName(c.key)),
-                    "<gray>Blocks: <white>" + (c.key.x() * 16) + ", " + (c.key.z() * 16),
+            set(inv, h, slot++, item(icon, "<gold>Territory of " + c.size() + " chunk(s)",
+                    "<gray>World: <white>" + esc(cm.worldName(first)),
+                    "<gray>Includes chunk: <white>" + first.x() + ", " + first.z()
+                            + " <gray>(blocks " + (first.x() * 16) + ", " + (first.z() * 16) + ")",
                     "<gray>Status: " + cm.statusLine(c),
                     "<gray>Trusted: <white>" + c.trusted.size()), null);
         }
@@ -375,11 +358,33 @@ public final class GuiManager implements Listener {
 
     // ----------------------------------------------------------------- borders
 
-    public void showBorders(Player p, int cx, int cz) {
-        final double minX = cx * 16.0;
-        final double maxX = minX + 16.0;
-        final double minZ = cz * 16.0;
-        final double maxZ = minZ + 16.0;
+    /** Shows the outline of the whole territory (or just this chunk if it is unclaimed). */
+    public void showBorders(Player p, ChunkKey key) {
+        Claim c = plugin.claims().get(key);
+        Set<ChunkKey> set = c == null ? Set.of(key) : c.chunks;
+        UUID worldId = p.getWorld().getUID();
+        final List<double[]> edges = new ArrayList<>();
+        for (ChunkKey k : set) {
+            if (!k.world().equals(worldId)) {
+                continue;
+            }
+            double x1 = k.x() * 16.0;
+            double z1 = k.z() * 16.0;
+            double x2 = x1 + 16.0;
+            double z2 = z1 + 16.0;
+            if (!set.contains(new ChunkKey(k.world(), k.x(), k.z() - 1))) {
+                edges.add(new double[]{x1, z1, x2, z1});
+            }
+            if (!set.contains(new ChunkKey(k.world(), k.x(), k.z() + 1))) {
+                edges.add(new double[]{x1, z2, x2, z2});
+            }
+            if (!set.contains(new ChunkKey(k.world(), k.x() - 1, k.z()))) {
+                edges.add(new double[]{x1, z1, x1, z2});
+            }
+            if (!set.contains(new ChunkKey(k.world(), k.x() + 1, k.z()))) {
+                edges.add(new double[]{x2, z1, x2, z2});
+            }
+        }
         new BukkitRunnable() {
             int runs = 0;
 
@@ -389,13 +394,21 @@ public final class GuiManager implements Listener {
                     cancel();
                     return;
                 }
-                double y = p.getLocation().getY();
-                for (double d = 0; d <= 16; d += 1) {
-                    for (double dy = 0; dy <= 2; dy += 1) {
-                        p.spawnParticle(Particle.END_ROD, minX + d, y + dy, minZ, 1, 0, 0, 0, 0);
-                        p.spawnParticle(Particle.END_ROD, minX + d, y + dy, maxZ, 1, 0, 0, 0, 0);
-                        p.spawnParticle(Particle.END_ROD, minX, y + dy, minZ + d, 1, 0, 0, 0, 0);
-                        p.spawnParticle(Particle.END_ROD, maxX, y + dy, minZ + d, 1, 0, 0, 0, 0);
+                double px = p.getLocation().getX();
+                double py = p.getLocation().getY();
+                double pz = p.getLocation().getZ();
+                for (double[] e : edges) {
+                    double cx = (e[0] + e[2]) / 2.0 - px;
+                    double cz = (e[1] + e[3]) / 2.0 - pz;
+                    if (cx * cx + cz * cz > 96.0 * 96.0) {
+                        continue;
+                    }
+                    for (int i = 0; i <= 8; i++) {
+                        double x = e[0] + (e[2] - e[0]) * i / 8.0;
+                        double z = e[1] + (e[3] - e[1]) * i / 8.0;
+                        for (double dy = 0; dy <= 2; dy += 1) {
+                            p.spawnParticle(Particle.END_ROD, x, py + dy, z, 1, 0, 0, 0, 0);
+                        }
                     }
                 }
             }
@@ -479,7 +492,7 @@ public final class GuiManager implements Listener {
             }
             case "borders" -> {
                 p.closeInventory();
-                showBorders(p, key.x(), key.z());
+                showBorders(p, key);
             }
             case "my_claims" -> later(() -> openMyClaims(p));
             default -> {

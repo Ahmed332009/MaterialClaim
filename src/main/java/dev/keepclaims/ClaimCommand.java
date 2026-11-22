@@ -27,11 +27,11 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
                 plugin.reloadAll();
                 plugin.send(sender, "reloaded");
             } else {
-                sender.sendMessage("KeepClaims: use '/claims admin reload' from the console.");
+                sender.sendMessage("MaterialClaim: use '/claims admin reload' from the console.");
             }
             return true;
         }
-        if (!p.hasPermission("keepclaims.use")) {
+        if (!p.hasPermission("materialclaim.use")) {
             plugin.send(p, "no-permission");
             return true;
         }
@@ -48,14 +48,14 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             case "unclaim" -> cm.unclaim(p, here);
             case "pay" -> gui.openPay(p, here);
             case "list" -> gui.openMyClaims(p);
-            case "borders" -> gui.showBorders(p, here.x(), here.z());
+            case "borders" -> gui.showBorders(p, here);
             case "info" -> {
                 Claim c = cm.get(here);
                 if (c == null) {
                     plugin.send(p, "no-claim-here");
                 } else {
                     plugin.sendMini(p, "<gray>Owner: <white>" + (c.isServer() ? "Server" : c.ownerName)
-                            + " <gray>| " + cm.statusLine(c));
+                            + " <gray>| <white>" + c.size() + " chunk(s) <gray>| " + cm.statusLine(c));
                 }
             }
             case "trust", "untrust" -> {
@@ -85,7 +85,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
     }
 
     private void admin(Player p, String[] args) {
-        if (!p.hasPermission("keepclaims.admin")) {
+        if (!p.hasPermission("materialclaim.admin")) {
             plugin.send(p, "no-permission");
             return;
         }
@@ -135,7 +135,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
                     out.add(o.getName());
                 }
             }
-        } else if (args.length == 2 && args[0].equalsIgnoreCase("admin") && sender.hasPermission("keepclaims.admin")) {
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("admin") && sender.hasPermission("materialclaim.admin")) {
             for (String s : List.of("bypass", "serverclaim", "unclaim", "reload")) {
                 if (s.startsWith(args[1].toLowerCase(Locale.ROOT))) {
                     out.add(s);

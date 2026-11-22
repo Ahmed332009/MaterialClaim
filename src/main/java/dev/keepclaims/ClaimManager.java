@@ -15,21 +15,37 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Holds every claim, saves them to claims.yml and runs the claim/pay/trust operations. */
+/**
+ * Holds every territory (group of connected chunks), saves them to claims.yml and runs the
+ * claim, pay, trust and unclaim operations.
+ *
+ * Upkeep model: a territory of n chunks drains upkeep at n * perChunkMultiplier(n)
+ * "chunk-hours" per hour. An item worth v hours adds v chunk-hours to the pool.
+ * Remaining time = pool / rate. When the size changes the pool is kept and the time is recomputed.
+ */
 public final class ClaimManager {
     private static final long HOUR_MS = 3_600_000L;
     private static final long DAY_MS = 86_400_000L;
 
     private final KeepClaims plugin;
-    private final Map<ChunkKey, Claim> claims = new ConcurrentHashMap<>();
+    private final Map<ChunkKey, Claim> byChunk = new ConcurrentHashMap<>();
+    private final Set<Claim> territories = ConcurrentHashMap.newKeySet();
     private final File file;
     private BukkitTask pendingSave;
     private List<double[]> tiers = new ArrayList<>();
@@ -43,7 +59,7 @@ public final class ClaimManager {
 
     public void reloadSettings() {
         List<double[]> list = new ArrayList<>();
-        for (Map<?, ?> m : plugin.getConfig().getMapList("cost-tiers")) {
+        for (Map<?, ?> m : plugin.getConfig().getMapList("group-upkeep")) {
             Object upTo = m.get("up-to");
             Object mult = m.get("multiplier");
             if (upTo instanceof Number a && mult instanceof Number b) {
@@ -57,13 +73,20 @@ public final class ClaimManager {
         tiers = list;
     }
 
-    public double multiplierFor(int ordinal) {
+    /** Upkeep multiplier per chunk for a territory of the given size. */
+    public double perChunkMultiplier(int size) {
         for (double[] t : tiers) {
-            if (ordinal <= t[0]) {
+            if (size <= t[0]) {
                 return Math.max(0.01, t[1]);
             }
         }
         return Math.max(0.01, tiers.get(tiers.size() - 1)[1]);
+    }
+
+    /** Chunk-hours drained per hour by this territory. */
+    public double rate(Claim c) {
+        int n = Math.max(1, c.size());
+        return n * perChunkMultiplier(n);
     }
 
     private long graceMs() {
@@ -74,36 +97,19 @@ public final class ClaimManager {
         return (long) (plugin.getConfig().getDouble("max-prepaid-days", 30) * DAY_MS);
     }
 
-    /** The maximum prepaid upkeep in hours, i.e. the cap a single claim can hold. */
-    public double maxPrepaidHours() {
-        return maxPrepaidMs() / (double) HOUR_MS;
-    }
-
-    /**
-     * How many hours of upkeep this claim can still take before hitting the prepaid cap.
-     * Never negative.
-     */
-    public double roomHours(Claim c) {
-        if (c == null || c.isServer()) {
-            return 0.0;
-        }
-        long now = System.currentTimeMillis();
-        long base = Math.max(now, c.paidUntil);
-        return Math.max(0.0, (now + maxPrepaidMs() - base) / (double) HOUR_MS);
-    }
-
     public boolean worldEnabled(World w) {
         List<String> list = plugin.getConfig().getStringList("enabled-worlds");
         return list.isEmpty() || list.contains(w.getName());
     }
 
+    /** Maximum total chunks a player may own. */
     public int limitFor(Player p) {
         int limit = plugin.getConfig().getInt("max-claims-default", 25);
         for (PermissionAttachmentInfo info : p.getEffectivePermissions()) {
             String perm = info.getPermission();
-            if (info.getValue() && perm.startsWith("keepclaims.limit.")) {
+            if (info.getValue() && perm.startsWith("materialclaim.limit.")) {
                 try {
-                    limit = Math.max(limit, Integer.parseInt(perm.substring("keepclaims.limit.".length())));
+                    limit = Math.max(limit, Integer.parseInt(perm.substring("materialclaim.limit.".length())));
                 } catch (NumberFormatException ignored) {
                     // not a number, skip
                 }
@@ -112,38 +118,172 @@ public final class ClaimManager {
         return limit;
     }
 
+    public int ownedChunks(UUID owner) {
+        int total = 0;
+        for (Claim c : territories) {
+            if (owner.equals(c.owner)) {
+                total += c.size();
+            }
+        }
+        return total;
+    }
+
     // ----------------------------------------------------------------- storage
 
+    private void register(Claim c) {
+        for (ChunkKey k : c.chunks) {
+            byChunk.put(k, c);
+        }
+        territories.add(c);
+    }
+
+    private void removeTerritory(Claim c) {
+        for (ChunkKey k : c.chunks) {
+            byChunk.remove(k, c);
+        }
+        territories.remove(c);
+    }
+
+    private static String keyString(ChunkKey k) {
+        return k.world() + ";" + k.x() + ";" + k.z();
+    }
+
+    private static ChunkKey parseKey(String s) {
+        String[] p = s.split(";");
+        return new ChunkKey(UUID.fromString(p[0]), Integer.parseInt(p[1]), Integer.parseInt(p[2]));
+    }
+
     public void load() {
-        claims.clear();
+        byChunk.clear();
+        territories.clear();
         if (!file.exists()) {
             return;
         }
         YamlConfiguration y = YamlConfiguration.loadConfiguration(file);
+        if (y.isList("territories")) {
+            for (Map<?, ?> m : y.getMapList("territories")) {
+                try {
+                    String ownerText = String.valueOf(m.get("owner"));
+                    UUID owner = ownerText.equals("SERVER") ? null : UUID.fromString(ownerText);
+                    Object name = m.get("owner-name");
+                    long created = ((Number) m.get("created")).longValue();
+                    long paid = ((Number) m.get("paid-until")).longValue();
+                    Claim c = new Claim(owner, name == null ? "Server" : String.valueOf(name), created, paid);
+                    if (m.get("trusted") instanceof List<?> tl) {
+                        for (Object t : tl) {
+                            c.trusted.add(UUID.fromString(String.valueOf(t)));
+                        }
+                    }
+                    if (m.get("chunks") instanceof List<?> cl) {
+                        for (Object o : cl) {
+                            c.chunks.add(parseKey(String.valueOf(o)));
+                        }
+                    }
+                    if (!c.chunks.isEmpty()) {
+                        register(c);
+                    }
+                } catch (Exception ex) {
+                    plugin.getLogger().warning("Skipping a bad territory entry: " + ex.getMessage());
+                }
+            }
+        } else if (y.isList("claims")) {
+            migrateOld(y);
+        }
+        plugin.getLogger().info("Loaded " + territories.size() + " territories (" + byChunk.size() + " chunks).");
+    }
+
+    private static final class Old {
+        ChunkKey key;
+        UUID owner;
+        String name;
+        long created;
+        long paid;
+        final Set<UUID> trusted = new LinkedHashSet<>();
+    }
+
+    /** Converts the old one-claim-per-chunk file format into connected territories. */
+    private void migrateOld(YamlConfiguration y) {
+        List<Old> olds = new ArrayList<>();
         for (Map<?, ?> m : y.getMapList("claims")) {
             try {
-                UUID world = UUID.fromString(String.valueOf(m.get("world")));
-                int x = ((Number) m.get("x")).intValue();
-                int z = ((Number) m.get("z")).intValue();
+                Old o = new Old();
+                o.key = new ChunkKey(UUID.fromString(String.valueOf(m.get("world"))),
+                        ((Number) m.get("x")).intValue(), ((Number) m.get("z")).intValue());
                 String ownerText = String.valueOf(m.get("owner"));
-                UUID owner = ownerText.equals("SERVER") ? null : UUID.fromString(ownerText);
-                Object name = m.get("owner-name");
-                long created = ((Number) m.get("created")).longValue();
-                long paid = ((Number) m.get("paid-until")).longValue();
-                Claim c = new Claim(new ChunkKey(world, x, z), owner,
-                        name == null ? "Server" : String.valueOf(name), created, paid);
-                Object trusted = m.get("trusted");
-                if (trusted instanceof List<?> list) {
-                    for (Object t : list) {
-                        c.trusted.add(UUID.fromString(String.valueOf(t)));
+                o.owner = ownerText.equals("SERVER") ? null : UUID.fromString(ownerText);
+                o.name = m.get("owner-name") == null ? "Server" : String.valueOf(m.get("owner-name"));
+                o.created = ((Number) m.get("created")).longValue();
+                o.paid = ((Number) m.get("paid-until")).longValue();
+                if (m.get("trusted") instanceof List<?> tl) {
+                    for (Object t : tl) {
+                        o.trusted.add(UUID.fromString(String.valueOf(t)));
                     }
                 }
-                claims.put(c.key, c);
+                olds.add(o);
             } catch (Exception ex) {
-                plugin.getLogger().warning("Skipping a bad claim entry: " + ex.getMessage());
+                plugin.getLogger().warning("Skipping a bad old claim entry: " + ex.getMessage());
             }
         }
-        plugin.getLogger().info("Loaded " + claims.size() + " claims.");
+        try {
+            Files.copy(file.toPath(), new File(plugin.getDataFolder(), "claims-old-format.yml").toPath(),
+                    StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            plugin.getLogger().warning("Could not back up the old claims file: " + e.getMessage());
+        }
+        long now = System.currentTimeMillis();
+        Map<UUID, Map<ChunkKey, Old>> perOwner = new HashMap<>();
+        for (Old o : olds) {
+            if (o.owner == null) {
+                Claim c = new Claim(null, "Server", o.created, Long.MAX_VALUE);
+                c.chunks.add(o.key);
+                register(c);
+            } else {
+                perOwner.computeIfAbsent(o.owner, k -> new LinkedHashMap<>()).put(o.key, o);
+            }
+        }
+        for (Map.Entry<UUID, Map<ChunkKey, Old>> e : perOwner.entrySet()) {
+            Map<ChunkKey, Old> map = e.getValue();
+            Set<ChunkKey> seen = new HashSet<>();
+            for (Old start : new ArrayList<>(map.values())) {
+                if (seen.contains(start.key)) {
+                    continue;
+                }
+                List<Old> group = new ArrayList<>();
+                Deque<ChunkKey> queue = new ArrayDeque<>();
+                queue.add(start.key);
+                seen.add(start.key);
+                while (!queue.isEmpty()) {
+                    ChunkKey k = queue.poll();
+                    group.add(map.get(k));
+                    for (ChunkKey n : neighbors(k)) {
+                        if (map.containsKey(n) && seen.add(n)) {
+                            queue.add(n);
+                        }
+                    }
+                }
+                double pool = 0;
+                long created = Long.MAX_VALUE;
+                long latestPaid = 0;
+                Claim c = new Claim(e.getKey(), start.name, now, now);
+                for (Old o : group) {
+                    pool += Math.max(0, o.paid - now) / (double) HOUR_MS;
+                    created = Math.min(created, o.created);
+                    latestPaid = Math.max(latestPaid, o.paid);
+                    c.trusted.addAll(o.trusted);
+                    c.chunks.add(o.key);
+                }
+                c.created = created;
+                if (pool > 0) {
+                    long remaining = (long) (pool / rate(c) * HOUR_MS);
+                    c.paidUntil = now + Math.min(remaining, maxPrepaidMs());
+                } else {
+                    c.paidUntil = latestPaid;
+                }
+                register(c);
+            }
+        }
+        plugin.getLogger().info("Converted " + olds.size() + " old claims. Backup saved as claims-old-format.yml.");
+        markDirty();
     }
 
     public void markDirty() {
@@ -162,20 +302,18 @@ public final class ClaimManager {
             pendingSave = null;
         }
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Claim c : claims.values()) {
+        for (Claim c : territories) {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("world", c.key.world().toString());
-            m.put("x", c.key.x());
-            m.put("z", c.key.z());
             m.put("owner", c.owner == null ? "SERVER" : c.owner.toString());
             m.put("owner-name", c.ownerName);
             m.put("created", c.created);
             m.put("paid-until", c.paidUntil);
             m.put("trusted", c.trusted.stream().map(UUID::toString).toList());
+            m.put("chunks", c.chunks.stream().map(ClaimManager::keyString).toList());
             out.add(m);
         }
         YamlConfiguration y = new YamlConfiguration();
-        y.set("claims", out);
+        y.set("territories", out);
         try {
             plugin.getDataFolder().mkdirs();
             File tmp = new File(plugin.getDataFolder(), "claims.yml.tmp");
@@ -193,34 +331,79 @@ public final class ClaimManager {
     }
 
     public Claim at(Location l) {
-        return l.getWorld() == null ? null : claims.get(keyOf(l));
+        return l.getWorld() == null ? null : byChunk.get(keyOf(l));
     }
 
     public Claim at(Block b) {
-        return claims.get(new ChunkKey(b.getWorld().getUID(), b.getX() >> 4, b.getZ() >> 4));
+        return byChunk.get(new ChunkKey(b.getWorld().getUID(), b.getX() >> 4, b.getZ() >> 4));
     }
 
     public Claim get(ChunkKey key) {
-        return claims.get(key);
+        return byChunk.get(key);
     }
 
+    /** The player's territories, oldest first. */
     public List<Claim> byOwner(UUID owner) {
         List<Claim> list = new ArrayList<>();
-        for (Claim c : claims.values()) {
+        for (Claim c : territories) {
             if (owner.equals(c.owner)) {
                 list.add(c);
             }
         }
         list.sort(Comparator.comparingLong((Claim c) -> c.created)
-                .thenComparingInt((Claim c) -> c.key.x())
-                .thenComparingInt((Claim c) -> c.key.z()));
+                .thenComparingInt((Claim c) -> c.chunks.iterator().next().x())
+                .thenComparingInt((Claim c) -> c.chunks.iterator().next().z()));
         return list;
     }
 
-    public int ordinalOf(Claim c) {
-        List<Claim> list = byOwner(c.owner);
-        int i = list.indexOf(c);
-        return i < 0 ? list.size() : i + 1;
+    /** Chunks next to this one (sides only, or sides and corners if connect-diagonals is true). */
+    public List<ChunkKey> neighbors(ChunkKey k) {
+        boolean diagonals = plugin.getConfig().getBoolean("connect-diagonals", false);
+        List<ChunkKey> out = new ArrayList<>(8);
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (dx == 0 && dz == 0) {
+                    continue;
+                }
+                if (!diagonals && dx != 0 && dz != 0) {
+                    continue;
+                }
+                out.add(new ChunkKey(k.world(), k.x() + dx, k.z() + dz));
+            }
+        }
+        return out;
+    }
+
+    /** The owner's territories that touch this chunk. */
+    public Set<Claim> adjacentOwned(UUID owner, ChunkKey key) {
+        Set<Claim> out = new LinkedHashSet<>();
+        for (ChunkKey n : neighbors(key)) {
+            Claim c = byChunk.get(n);
+            if (c != null && owner.equals(c.owner)) {
+                out.add(c);
+            }
+        }
+        return out;
+    }
+
+    private boolean connected(Set<ChunkKey> set) {
+        if (set.isEmpty()) {
+            return true;
+        }
+        Set<ChunkKey> seen = new HashSet<>();
+        Deque<ChunkKey> queue = new ArrayDeque<>();
+        ChunkKey first = set.iterator().next();
+        queue.add(first);
+        seen.add(first);
+        while (!queue.isEmpty()) {
+            ChunkKey k = queue.poll();
+            for (ChunkKey n : neighbors(k)) {
+                if (set.contains(n) && seen.add(n)) {
+                    queue.add(n);
+                }
+            }
+        }
+        return seen.size() == set.size();
     }
 
     public String worldName(ChunkKey key) {
@@ -229,7 +412,7 @@ public final class ClaimManager {
     }
 
     public boolean sameOwner(Claim a, Claim b) {
-        return a != null && b != null && java.util.Objects.equals(a.owner, b.owner);
+        return a != null && b != null && Objects.equals(a.owner, b.owner);
     }
 
     public boolean allowed(Player p, Claim c) {
@@ -250,7 +433,7 @@ public final class ClaimManager {
         return c.paidUntil - System.currentTimeMillis();
     }
 
-    /** MiniMessage text describing the upkeep state of a claim. */
+    /** MiniMessage text describing the upkeep state of a territory. */
     public String statusLine(Claim c) {
         if (c.isServer()) {
             return "<aqua>Server protected";
@@ -275,7 +458,7 @@ public final class ClaimManager {
             return;
         }
         ChunkKey key = keyOf(l);
-        Claim existing = claims.get(key);
+        Claim existing = byChunk.get(key);
         if (existing != null) {
             if (p.getUniqueId().equals(existing.owner)) {
                 plugin.send(p, "already-yours");
@@ -284,34 +467,71 @@ public final class ClaimManager {
             }
             return;
         }
-        List<Claim> mine = byOwner(p.getUniqueId());
         int limit = limitFor(p);
-        if (mine.size() >= limit) {
+        if (ownedChunks(p.getUniqueId()) >= limit) {
             plugin.send(p, "limit-reached", "limit", String.valueOf(limit));
             return;
         }
-        double mult = multiplierFor(mine.size() + 1);
-        // Never ask for more upkeep than the claim can hold; charge() would clamp it
-        // anyway, and the player would be quoted a price we would not honour.
-        double maxInitialHours = maxPrepaidHours();
-        double hours = Math.min(plugin.getConfig().getDouble("initial-hours", 168), maxInitialHours);
-        PaymentService.Result r = plugin.payments().charge(p, hours, mult,
-                plugin.payments().choiceOf(p), maxInitialHours);
+        Set<Claim> adjacent = adjacentOwned(p.getUniqueId(), key);
+        int newSize = 1;
+        for (Claim a : adjacent) {
+            newSize += a.size();
+        }
+        double f = newSize * perChunkMultiplier(newSize);
+        double price = plugin.getConfig().getDouble("initial-hours", 96);
+        long now = System.currentTimeMillis();
+        // Upkeep already banked in the territories this chunk joins.
+        double carried = 0;
+        for (Claim a : adjacent) {
+            long left = a.paidUntil - now;
+            if (left > 0) {
+                carried += (left / (double) HOUR_MS) * rate(a);
+            }
+        }
+        // Hours this territory can still hold: the cap minus whatever is already carried.
+        double roomHours = Math.max(0, maxPrepaidMs() / (double) HOUR_MS - carried / f);
+        if (roomHours <= 0) {
+            plugin.send(p, "max-prepaid");
+            return;
+        }
+        double wantHours = Math.min(price / f, roomHours);
+        // Raw item value needed is exactly the claim price, whatever the territory size.
+        // The room ceiling stops whole-item rounding from crediting time that gets truncated.
+        PaymentService.Result r = plugin.payments().charge(p, wantHours, f,
+                plugin.payments().choiceOf(p), roomHours);
         if (!r.ok()) {
             plugin.sendMini(p, r.error());
             return;
         }
-        long now = System.currentTimeMillis();
-        long until = now + Math.min((long) (r.credited() * HOUR_MS), maxPrepaidMs());
-        Claim c = new Claim(key, p.getUniqueId(), p.getName(), now, until);
-        claims.put(key, c);
+        double paidRaw = r.credited() * f;
+        double pool = paidRaw + carried;
+        long remaining = Math.min((long) (pool / f * HOUR_MS), maxPrepaidMs());
+
+        Claim target;
+        if (adjacent.isEmpty()) {
+            target = new Claim(p.getUniqueId(), p.getName(), now, now + remaining);
+        } else {
+            Iterator<Claim> it = adjacent.iterator();
+            target = it.next();
+            while (it.hasNext()) {
+                Claim other = it.next();
+                target.chunks.addAll(other.chunks);
+                target.trusted.addAll(other.trusted);
+                target.created = Math.min(target.created, other.created);
+                territories.remove(other);
+            }
+        }
+        target.chunks.add(key);
+        target.ownerName = p.getName();
+        target.paidUntil = now + remaining;
+        register(target);
         markDirty();
-        plugin.send(p, "claim-success", "time", Util.duration(until - now));
+        plugin.send(p, "claim-success", "time", Util.duration(remaining), "size", String.valueOf(target.size()));
     }
 
-    /** hours <= 0 means "fill up to the maximum". */
+    /** hours <= 0 means "fill up to the maximum". Pays for the whole territory. */
     public void payHere(Player p, ChunkKey key, double hours) {
-        Claim c = claims.get(key);
+        Claim c = byChunk.get(key);
         if (c == null) {
             plugin.send(p, "no-claim-here");
             return;
@@ -323,18 +543,17 @@ public final class ClaimManager {
         long now = System.currentTimeMillis();
         long base = Math.max(now, c.paidUntil);
         long cap = now + maxPrepaidMs();
-        double allowedHours = roomHours(c);
-        if (allowedHours <= 0 || base >= cap - 60_000L) {
+        if (base >= cap - 60_000L) {
             plugin.send(p, "max-prepaid");
             return;
         }
+        double allowedHours = (cap - base) / (double) HOUR_MS;
         if (hours <= 0 || hours > allowedHours) {
             hours = allowedHours;
         }
-        double mult = multiplierFor(ordinalOf(c));
-        // Pass the remaining room as a hard ceiling: charge() shrinks the payment to the
-        // largest whole-item amount that fits, so no paid-for value is ever discarded.
-        PaymentService.Result r = plugin.payments().charge(p, hours, mult,
+        // Pass the remaining room as a hard ceiling so whole-item rounding cannot credit
+        // more upkeep than the territory can hold, which would discard paid-for items.
+        PaymentService.Result r = plugin.payments().charge(p, hours, rate(c),
                 plugin.payments().choiceOf(p), allowedHours);
         if (!r.ok()) {
             plugin.sendMini(p, r.error());
@@ -342,8 +561,6 @@ public final class ClaimManager {
         }
         long newUntil = base + (long) (r.credited() * HOUR_MS);
         if (newUntil > cap) {
-            // charge() is ceiling-aware, so this should be unreachable; clamp defensively
-            // and say so rather than silently dropping value.
             newUntil = cap;
             plugin.getLogger().warning("Upkeep clamp triggered for " + p.getName()
                     + " despite a ceiling-aware charge; credited=" + r.credited());
@@ -354,7 +571,7 @@ public final class ClaimManager {
     }
 
     public void unclaim(Player p, ChunkKey key) {
-        Claim c = claims.get(key);
+        Claim c = byChunk.get(key);
         if (c == null) {
             plugin.send(p, "no-claim-here");
             return;
@@ -363,13 +580,33 @@ public final class ClaimManager {
             plugin.send(p, "not-your-claim");
             return;
         }
-        claims.remove(key);
+        if (c.size() == 1) {
+            removeTerritory(c);
+            markDirty();
+            plugin.send(p, "unclaim-success");
+            return;
+        }
+        Set<ChunkKey> rest = new LinkedHashSet<>(c.chunks);
+        rest.remove(key);
+        if (!connected(rest)) {
+            plugin.send(p, "unclaim-split");
+            return;
+        }
+        long now = System.currentTimeMillis();
+        boolean active = c.paidUntil > now;
+        double pool = active ? ((c.paidUntil - now) / (double) HOUR_MS) * rate(c) : 0;
+        c.chunks.remove(key);
+        byChunk.remove(key, c);
+        if (active) {
+            long remaining = (long) (pool / rate(c) * HOUR_MS);
+            c.paidUntil = now + Math.min(remaining, maxPrepaidMs());
+        }
         markDirty();
         plugin.send(p, "unclaim-success");
     }
 
     public void trust(Player p, ChunkKey key, UUID target, String name) {
-        Claim c = claims.get(key);
+        Claim c = byChunk.get(key);
         if (c == null || !p.getUniqueId().equals(c.owner)) {
             plugin.send(p, "not-your-claim");
             return;
@@ -387,7 +624,7 @@ public final class ClaimManager {
     }
 
     public void untrust(Player p, ChunkKey key, UUID target, String name) {
-        Claim c = claims.get(key);
+        Claim c = byChunk.get(key);
         if (c == null || !p.getUniqueId().equals(c.owner)) {
             plugin.send(p, "not-your-claim");
             return;
@@ -407,10 +644,12 @@ public final class ClaimManager {
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dz = -radius; dz <= radius; dz++) {
                 ChunkKey k = new ChunkKey(center.world(), center.x() + dx, center.z() + dz);
-                if (claims.containsKey(k)) {
+                if (byChunk.containsKey(k)) {
                     continue;
                 }
-                claims.put(k, new Claim(k, null, "Server", now, Long.MAX_VALUE));
+                Claim c = new Claim(null, "Server", now, Long.MAX_VALUE);
+                c.chunks.add(k);
+                register(c);
                 count++;
             }
         }
@@ -418,12 +657,14 @@ public final class ClaimManager {
         plugin.send(p, "server-claimed", "count", String.valueOf(count));
     }
 
+    /** Removes the whole territory the admin is standing in. */
     public void adminUnclaim(Player p) {
-        Claim c = claims.remove(keyOf(p.getLocation()));
+        Claim c = byChunk.get(keyOf(p.getLocation()));
         if (c == null) {
             plugin.send(p, "no-claim-here");
             return;
         }
+        removeTerritory(c);
         markDirty();
         plugin.send(p, "admin-unclaimed");
     }
@@ -434,7 +675,7 @@ public final class ClaimManager {
         long now = System.currentTimeMillis();
         long grace = graceMs();
         List<Claim> dead = new ArrayList<>();
-        for (Claim c : claims.values()) {
+        for (Claim c : territories) {
             if (!c.isServer() && now > c.paidUntil + grace) {
                 dead.add(c);
             }
@@ -444,13 +685,16 @@ public final class ClaimManager {
         }
         StringBuilder log = new StringBuilder();
         for (Claim c : dead) {
-            claims.remove(c.key);
+            ChunkKey first = c.chunks.iterator().next();
+            removeTerritory(c);
             log.append(Instant.now()).append(" expired owner=").append(c.ownerName)
-                    .append(" world=").append(worldName(c.key))
-                    .append(" chunk=").append(c.key.x()).append(',').append(c.key.z()).append('\n');
+                    .append(" world=").append(worldName(first))
+                    .append(" chunks=").append(c.size())
+                    .append(" first=").append(first.x()).append(',').append(first.z()).append('\n');
             Player owner = Bukkit.getPlayer(c.owner);
             if (owner != null) {
-                plugin.send(owner, "claim-expired", "x", String.valueOf(c.key.x()), "z", String.valueOf(c.key.z()));
+                plugin.send(owner, "claim-expired", "x", String.valueOf(first.x()), "z", String.valueOf(first.z()),
+                        "size", String.valueOf(c.size()));
             }
         }
         markDirty();
@@ -463,7 +707,7 @@ public final class ClaimManager {
         }
     }
 
-    /** Number of the player's claims with less than warn-days of upkeep left. */
+    /** Number of the player's territories with less than warn-days of upkeep left. */
     public int lowCount(UUID owner) {
         long warn = (long) (plugin.getConfig().getDouble("warn-days", 3) * DAY_MS);
         int n = 0;

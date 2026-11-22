@@ -1,52 +1,55 @@
-# KeepClaims configuration
-# Every value of "time" below is hours of upkeep for ONE chunk.
+# MaterialClaim configuration
+# Item values below are hours of upkeep for ONE chunk. A diamond is worth 12 hours.
 
 # Worlds where claiming is allowed. Empty list = every world.
 enabled-worlds: []
 
-# Default maximum claims per player. Give more with the permission keepclaims.limit.<number>
+# Default maximum chunks per player (all territories together). Give more with the permission materialclaim.limit.<number>
 max-claims-default: 25
 
-# Item value, in hours, a player must pay to claim a chunk (168 = one week).
-initial-hours: 168
+# Claim price per chunk, as item value in hours (96 = 8 diamonds when diamond is worth 12).
+# Every new chunk costs this, whether it starts a new territory or joins one you already own.
+initial-hours: 96
 
-# Nobody can bank more than this many days of upkeep on one chunk.
-max-prepaid-days: 30
+# Nobody can bank more than this many days of upkeep on one territory.
+max-prepaid-days: 14
 
-# After upkeep runs out the claim keeps protecting for this many days, then it is removed.
+# After upkeep ends the territory keeps protecting for this many days, then it is removed.
 grace-days: 7
 
 # How often (minutes) the plugin checks for expired claims.
 check-interval-minutes: 5
 
-# Players are warned on join when a claim has less than this many days left.
+# Players are warned on join when a territory has less than this many days left.
 warn-days: 3
 
-# Cost scaling by how many claims a player owns.
-# multiplier below 1.0 = cheaper, above 1.0 = more expensive.
-# A claim's number is its position among the owner's claims, oldest first.
-cost-tiers:
-  - up-to: 3
-    multiplier: 0.5
-  - up-to: 10
-    multiplier: 1.0
+# Chunks that touch each other (sides only) become ONE territory with one payment,
+# one upkeep clock and one trust list. Set to true to also join chunks that only touch at a corner.
+# Note: with false, corner-touching chunks stay separate territories.
+connect-diagonals: false
+
+# How the upkeep rate grows with territory size.
+# A territory of n chunks drains n x multiplier chunk-hours per hour, where the multiplier
+# is chosen by n. 1.0 = every chunk costs the same. Above 1.0 = big territories pay more per chunk.
+# Example: 1-5 chunks 1.0, 6-15 chunks 1.1, 16 and more 1.25
+group-upkeep:
   - up-to: 1000
-    multiplier: 1.5
+    multiplier: 1.0
 
 # Accepted items and the hours of upkeep each is worth at multiplier 1.0.
 # Only plain items count (renamed or enchanted items are ignored).
 # Keep farmable items (iron, gold, copper) low, and anchor on diamond and netherite.
 materials:
-  COPPER_INGOT: 4
-  COPPER_BLOCK: 36
-  IRON_INGOT: 6
-  IRON_BLOCK: 54
-  GOLD_INGOT: 8
-  GOLD_BLOCK: 72
-  DIAMOND: 72
-  DIAMOND_BLOCK: 648
-  NETHERITE_INGOT: 240
-  NETHERITE_BLOCK: 2160
+  COPPER_INGOT: 0.25
+  COPPER_BLOCK: 2.25
+  IRON_INGOT: 0.5
+  IRON_BLOCK: 4.5
+  GOLD_INGOT: 1
+  GOLD_BLOCK: 9
+  DIAMOND: 12
+  DIAMOND_BLOCK: 108
+  NETHERITE_INGOT: 48
+  NETHERITE_BLOCK: 432
 
 # Blocks anyone may still use inside other players' claims.
 public-blocks:
@@ -70,26 +73,24 @@ messages:
   already-yours: "<yellow>You already own this chunk."
   already-claimed: "<red>This chunk already belongs to {owner}."
   limit-reached: "<red>You reached your claim limit of {limit}."
-  claim-success: "<green>Chunk claimed. It has <white>{time}</white> of upkeep."
+  claim-success: "<green>Chunk claimed. Your territory is now <white>{size}</white> chunk(s) with <white>{time}</white> of upkeep."
   unclaim-success: "<yellow>Chunk unclaimed. Upkeep is not refunded."
   no-claim-here: "<red>There is no claim here."
   not-your-claim: "<red>That is not your claim."
   pay-success: "<green>Upkeep paid. This claim now has <white>{time}</white> left."
   max-prepaid: "<yellow>This claim is already at the maximum prepaid time."
-  # Shown when a claim has room for less than a single item. Nothing is taken.
-  over-cap: "<red>This claim can only hold {room} more upkeep, which is not enough for even one of those items. Pick a cheaper item, or use automatic."
-  # Shown when a payment works out to zero or less (should not normally happen).
-  nothing-paid: "<red>There is nothing to pay here."
+  capped: "<yellow>The maximum prepaid time was reached, so some of the payment was not needed."
   protected: "<red>This land is claimed by {owner}."
   trust-added: "<green>{name} can now build in this claim."
   trust-removed: "<yellow>{name} was removed from this claim."
   trust-self: "<red>You cannot trust yourself."
   already-trusted: "<yellow>{name} is already trusted here."
   unknown-player: "<red>Player not found."
-  claim-expired: "<red>Your claim at chunk {x}, {z} ran out of upkeep and was removed."
-  expiring-warning: "<yellow>{count} of your claims are running low on upkeep. Open /claims to pay."
-  reloaded: "<green>KeepClaims reloaded."
+  claim-expired: "<red>Your territory of {size} chunk(s) near chunk {x}, {z} ran out of upkeep and was removed."
+  unclaim-split: "<red>Unclaiming this chunk would split your territory in two. Unclaim from the edges instead."
+  expiring-warning: "<yellow>{count} of your territories are running low on upkeep. Open /claims to pay."
+  reloaded: "<green>MaterialClaim reloaded."
   bypass-on: "<yellow>Claim bypass enabled."
   bypass-off: "<yellow>Claim bypass disabled."
   server-claimed: "<green>Claimed {count} chunk(s) for the server."
-  admin-unclaimed: "<yellow>Claim removed."
+  admin-unclaimed: "<yellow>The whole connected territory was removed."
