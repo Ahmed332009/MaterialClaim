@@ -217,8 +217,9 @@ public final class SettingsService {
     /**
      * May this player change this flag at all, ignoring money?
      *
-     * Roles decide: the owner may do anything on their own land, managers may only touch
-     * free toggles, admins may do anything anywhere. The permission nodes also gate it,
+     * Roles decide: the owner and managers may change free toggles and buy or remove paid
+     * protections (they pay the fee from their own inventory), admins may do anything
+     * anywhere for free. The permission nodes also gate it,
      * so a server can hand out flag rights without handing out whole territories:
      * materialclaim.flags for free toggles, materialclaim.flags.paid for paid
      * protections, materialclaim.flags.any for any territory.
@@ -232,7 +233,7 @@ public final class SettingsService {
         boolean anyTerritory = p.hasPermission("materialclaim.flags.any");
         boolean allowedHere = anyTerritory
                 || role == Role.OWNER
-                || (role == Role.MANAGER && !f.isPaid());
+                || role == Role.MANAGER;
         if (!allowedHere) {
             return false;
         }
@@ -255,15 +256,24 @@ public final class SettingsService {
             boolean lacksFlagNode = f.isPaid()
                     ? !p.hasPermission("materialclaim.flags.paid")
                     : !p.hasPermission("materialclaim.flags");
-            if (lacksFlagNode && (role == Role.OWNER || role == Role.ADMIN)) {
+            if (lacksFlagNode && role != Role.VISITOR && role != Role.BUILDER) {
                 return plugin.message("no-permission");
-            }
-            if (f.isPaid() && role == Role.MANAGER) {
-                return plugin.message("flag-manager-paid");
             }
             return plugin.message("not-your-claim");
         }
         return null;
+    }
+
+    /** Owner, manager or admin: may pay upkeep and change settings. */
+    public boolean canManage(Player p, Claim c) {
+        Role r = roleOf(p, c);
+        return r == Role.ADMIN || r == Role.OWNER || r == Role.MANAGER;
+    }
+
+    /** Owner or admin: may manage trusted players and unclaim. */
+    public boolean isOwnerOrAdmin(Player p, Claim c) {
+        Role r = roleOf(p, c);
+        return r == Role.ADMIN || r == Role.OWNER;
     }
 
     // ------------------------------------------------------------ persistence

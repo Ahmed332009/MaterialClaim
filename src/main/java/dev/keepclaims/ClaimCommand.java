@@ -62,7 +62,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             case "flag" -> flag(p, args);
             case "trust", "untrust" -> {
                 if (args.length < 2) {
-                    plugin.sendMini(p, "<red>Usage: /claims " + args[0].toLowerCase(Locale.ROOT) + " <player>");
+                    plugin.sendMini(p, "<red>Usage: /claims trust <player> [builder|manager]  or  /claims untrust <player>");
                     return true;
                 }
                 OfflinePlayer target = Bukkit.getPlayerExact(args[1]);
@@ -75,7 +75,18 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
                 }
                 String name = target.getName() != null ? target.getName() : args[1];
                 if (args[0].equalsIgnoreCase("trust")) {
-                    TrustList.Level level = args.length > 2 ? TrustList.Level.parse(args[2]) : null;
+                    TrustList.Level level = null;
+                    if (args.length > 2) {
+                        String lv = args[2].toLowerCase(Locale.ROOT);
+                        if (lv.equals("builder")) {
+                            level = TrustList.Level.BUILDER;
+                        } else if (lv.equals("manager")) {
+                            level = TrustList.Level.MANAGER;
+                        } else {
+                            plugin.sendMini(p, "<red>Level must be builder or manager.");
+                            return true;
+                        }
+                    }
                     cm.trust(p, here, target.getUniqueId(), name, level);
                 } else {
                     cm.untrust(p, here, target.getUniqueId(), name);
@@ -118,19 +129,16 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
 
         // pvp-scope and the text fields are not simple on/off flags.
         if (rawFlag.equalsIgnoreCase("pvp-scope")) {
+            TerritorySettings.PvpScope scope = parseScope(value);
+            if (scope == null) {
+                plugin.sendMini(p, "<red>Use everyone, visitors, trusted or nobody.");
+                return;
+            }
             Claim c = resolveTerritory(p, territoryArg);
             if (c == null) {
                 return;
             }
-            SettingsService svc = plugin.settings();
-            String refuse = svc.refusal(p, c, SettingsService.Flag.PVP);
-            if (refuse != null) {
-                plugin.sendMini(p, refuse);
-                return;
-            }
-            c.settings.pvpScope = TerritorySettings.PvpScope.parse(value);
-            plugin.claims().markDirty();
-            plugin.send(p, "flag-changed", "flag", "pvpscope", "value", c.settings.pvpScope.label());
+            plugin.claims().setPvpScope(p, c, scope);
             return;
         }
 
@@ -169,6 +177,18 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             return;
         }
         plugin.claims().changeFlag(p, c, flag, on);
+    }
+
+    /** everyone, visitors, trusted or nobody. Returns null for anything else. */
+    private static TerritorySettings.PvpScope parseScope(String raw) {
+        String v = raw.toLowerCase(Locale.ROOT).replace("-", "").replace("_", "");
+        return switch (v) {
+            case "everyone", "all" -> TerritorySettings.PvpScope.EVERYONE;
+            case "visitors", "visitorsonly" -> TerritorySettings.PvpScope.VISITORS_ONLY;
+            case "trusted", "trustedonly", "members", "membersonly" -> TerritorySettings.PvpScope.TRUSTED_ONLY;
+            case "nobody", "noone", "none" -> TerritorySettings.PvpScope.NOBODY;
+            default -> null;
+        };
     }
 
     private static Boolean parseBool(String v) {
@@ -270,6 +290,32 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             for (Player o : Bukkit.getOnlinePlayers()) {
                 if (o.getName().toLowerCase(Locale.ROOT).startsWith(args[1].toLowerCase(Locale.ROOT))) {
                     out.add(o.getName());
+                }
+            }
+        } else if (args.length == 3 && args[0].equalsIgnoreCase("trust")) {
+            for (String s : List.of("builder", "manager")) {
+                if (s.startsWith(args[2].toLowerCase(Locale.ROOT))) {
+                    out.add(s);
+                }
+            }
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("flag")) {
+            for (SettingsService.Flag f : SettingsService.Flag.values()) {
+                if (f.id.startsWith(args[1].toLowerCase(Locale.ROOT))) {
+                    out.add(f.id);
+                }
+            }
+            for (String s : List.of("pvp-scope", "name", "entry-message", "leave-message")) {
+                if (s.startsWith(args[1].toLowerCase(Locale.ROOT))) {
+                    out.add(s);
+                }
+            }
+        } else if (args.length == 3 && args[0].equalsIgnoreCase("flag")) {
+            List<String> values = args[1].equalsIgnoreCase("pvp-scope")
+                    ? List.of("everyone", "visitors", "trusted", "nobody")
+                    : List.of("on", "off");
+            for (String s : values) {
+                if (s.startsWith(args[2].toLowerCase(Locale.ROOT))) {
+                    out.add(s);
                 }
             }
         } else if (args.length == 2 && args[0].equalsIgnoreCase("admin") && sender.hasPermission("materialclaim.admin")) {

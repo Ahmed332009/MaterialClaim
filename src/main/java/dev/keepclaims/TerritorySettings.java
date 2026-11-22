@@ -58,9 +58,10 @@ public final class TerritorySettings {
     public boolean visitorDoors = false;
     public boolean visitorContainers = false;
     public boolean visitorAnimals = false;
-    public boolean mobGriefing = true;
-    public boolean fluidFlow = true;
-    public boolean cropTrample = true;
+    // These start blocked (false) so a new territory is safe by default.
+    public boolean mobGriefing = false;
+    public boolean fluidFlow = false;
+    public boolean cropTrample = false;
 
     // --- extra
     /**
@@ -69,7 +70,8 @@ public final class TerritorySettings {
      * turned on and off as often as the owner likes at no extra cost.
      */
     public final Set<String> purchased = new LinkedHashSet<>();
-    public PvpScope pvpScope = PvpScope.EVERYONE;
+    /** Who may still fight once PvP protection is active. Starts at NOBODY so buying it works at once. */
+    public PvpScope pvpScope = PvpScope.NOBODY;
     public String customName = "";
     public String entryMessage = "";
     public String leaveMessage = "";
@@ -94,6 +96,48 @@ public final class TerritorySettings {
         s.fluidFlow = defaults.getBoolean("fluid-flow", s.fluidFlow);
         s.cropTrample = defaults.getBoolean("crop-trample", s.cropTrample);
         return s;
+    }
+
+    /** Server claims (spawn, shops) start fully protected. */
+    public void applyServerDefaults() {
+        explosionDamage = false;
+        pvp = false;
+        pvpScope = PvpScope.NOBODY;
+        mobSpawning = false;
+        fireSpread = false;
+    }
+
+    /**
+     * Folds the settings of a territory that is being merged into this one. A paid
+     * protection stays on if either territory had it, and purchases are kept, so
+     * merging never silently throws away something the owner paid for.
+     */
+    public void absorb(TerritorySettings o) {
+        if (!o.explosionDamage) {
+            explosionDamage = false;
+        }
+        if (!o.pvp) {
+            if (pvp) {
+                pvpScope = o.pvpScope;
+            }
+            pvp = false;
+        }
+        if (!o.mobSpawning) {
+            mobSpawning = false;
+        }
+        if (!o.fireSpread) {
+            fireSpread = false;
+        }
+        purchased.addAll(o.purchased);
+        if (customName == null || customName.isBlank()) {
+            customName = o.customName;
+        }
+        if (entryMessage == null || entryMessage.isBlank()) {
+            entryMessage = o.entryMessage;
+        }
+        if (leaveMessage == null || leaveMessage.isBlank()) {
+            leaveMessage = o.leaveMessage;
+        }
     }
 
     public TerritorySettings copy() {

@@ -81,11 +81,11 @@ Every territory has its own settings. Open **Settings** from the main menu, or u
 | Protection | What it stops |
 |---|---|
 | Explosion Damage | TNT, creeper and wither block damage |
-| PvP | Player vs player combat (with a scope: everyone, visitors, trusted, nobody) |
+| PvP | Player vs player combat. One control with four choices: everyone (no protection), visitors only, trusted only, nobody |
 | Mob Spawning | Hostile mobs spawning inside the territory |
 | Fire Spread | Fire spreading to or from territory blocks |
 
-**Free toggles** cost nothing. Managers may change these too.
+**Free toggles** cost nothing. All of them start **blocked** on a new territory. Owners and managers can change them.
 
 | Toggle | Meaning |
 |---|---|
@@ -96,7 +96,7 @@ Every territory has its own settings. Open **Settings** from the main menu, or u
 | Fluid Flow | Fluids from neighbouring chunks may flow in |
 | Crop Trampling | Visitors may trample crops |
 
-Also available: a custom **territory name**, and **entry / leave messages** (`{territory}` and `{player}` placeholders).
+Also available: a custom **territory name**, and **entry / leave messages** (`{territory}` and `{player}` placeholders, plain text only). Explosions only damage blocks in territories that have not bought explosion protection, so a protected neighbour is never hurt. Server claims (spawn, shops) are fully protected from the start. Unpaid protections switch off as soon as a territory is overdue; they are remembered as bought and can be switched back on for free after paying upkeep.
 
 ### Trust levels
 
@@ -104,9 +104,9 @@ Also available: a custom **territory name**, and **entry / leave messages** (`{t
 |---|---|
 | Visitor | Subject to the free-toggle rules only |
 | Builder | Place and break blocks |
-| Manager | Build, plus change free toggles and pay upkeep |
+| Manager | Builder, plus: pay upkeep, buy and remove paid protections (the manager pays the fee), change free toggles, name and messages |
 
-Only the owner (or an admin) can change paid protections.
+Only the owner (or an admin) can add or remove trusted players, change their level, or unclaim. Admins can do everything on every territory and never pay fees. In the menu, tap a trusted player to pick Builder, Manager or Remove.
 
 ## Commands
 

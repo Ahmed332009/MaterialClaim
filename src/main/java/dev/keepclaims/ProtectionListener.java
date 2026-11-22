@@ -209,6 +209,9 @@ public final class ProtectionListener implements Listener {
         }
         if (e.getAction() == Action.PHYSICAL) {
             Material t = b.getType();
+            if (t == Material.FARMLAND && settings().get(c, SettingsService.Flag.CROP_TRAMPLE)) {
+                return; // the owner allows visitors to trample crops
+            }
             if (t == Material.FARMLAND || t == Material.TURTLE_EGG || t == Material.SNIFFER_EGG) {
                 e.setCancelled(true);
             }
@@ -306,15 +309,23 @@ public final class ProtectionListener implements Listener {
             return;
         }
         Claim c = claims.at(e.getVehicle().getLocation());
-        if (!claims.allowed(p, c)) {
-            deny(p, c);
-            e.setCancelled(true);
+        if (c == null || claims.allowed(p, c)) {
+            return;
         }
+        if (settings().get(c, SettingsService.Flag.VISITOR_ANIMALS)) {
+            return;
+        }
+        deny(p, c);
+        e.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onDamage(EntityDamageByEntityEvent e) {
         if (!protectedEntity(e.getEntity())) {
+            return;
+        }
+        // Animals and vehicles follow the visitor toggle and are handled in onAnimalDamage.
+        if (e.getEntity() instanceof Animals || e.getEntity() instanceof org.bukkit.entity.Vehicle) {
             return;
         }
         Player p = playerFrom(e.getDamager());
@@ -465,10 +476,17 @@ public final class ProtectionListener implements Listener {
                 && !(e.getEntity() instanceof org.bukkit.entity.Phantom)) {
             return;
         }
+        if (!BLOCKED_SPAWN_REASONS.contains(e.getSpawnReason().name())) {
+            return;
+        }
         if (protectedBy(claims.at(e.getLocation()), SettingsService.Flag.MOB_SPAWNING)) {
             e.setCancelled(true);
         }
     }
+
+    /** Spawn reasons that count as hostile mobs appearing on their own. */
+    private static final Set<String> BLOCKED_SPAWN_REASONS = Set.of(
+            "NATURAL", "JOCKEY", "REINFORCEMENTS", "VILLAGE_INVASION", "RAID", "PATROL", "TRAP");
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onIgnite(BlockIgniteEvent e) {
@@ -478,7 +496,11 @@ public final class ProtectionListener implements Listener {
         }
         Player p = e.getPlayer();
         if (p == null) {
-            e.setCancelled(true);
+            // Fire with no player behind it (spread, lava, lightning) is only stopped
+            // when the territory bought fire protection.
+            if (protectedBy(c, SettingsService.Flag.FIRE_SPREAD)) {
+                e.setCancelled(true);
+            }
         } else if (!claims.allowed(p, c)) {
             deny(p, c);
             e.setCancelled(true);
@@ -561,13 +583,13 @@ public final class ProtectionListener implements Listener {
             String msg = before.settings.leaveMessage
                     .replace("{territory}", before.displayName())
                     .replace("{player}", p.getName());
-            plugin.sendRaw(p, msg);
+            plugin.sendRaw(p, plugin.escape(msg));
         }
         if (now != null && !now.settings.entryMessage.isBlank()) {
             String msg = now.settings.entryMessage
                     .replace("{territory}", now.displayName())
                     .replace("{player}", p.getName());
-            plugin.sendRaw(p, msg);
+            plugin.sendRaw(p, plugin.escape(msg));
         }
     }
 

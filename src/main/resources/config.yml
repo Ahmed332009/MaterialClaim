@@ -89,9 +89,9 @@ territory-settings:
     visitor-doors: false
     visitor-containers: false
     visitor-animals: false
-    mob-griefing: true
-    fluid-flow: true
-    crop-trample: true
+    mob-griefing: false         # false = blocked (safe by default)
+    fluid-flow: false
+    crop-trample: false
   # Admin can lock flags so players cannot change them. Set true to lock server-wide.
   locked:
     fire-spread: false
@@ -138,3 +138,4 @@ messages:
   territory-not-found: "<red>No territory found for {query}."
   protections-dropped: "<red>{name} ran out of upkeep, so its paid protections were switched off. Pay upkeep to restore them."
   text-prompt: "<yellow>Type the new value in chat, or type cancel."
+  text-cancelled: "<yellow>Cancelled. Nothing was changed."

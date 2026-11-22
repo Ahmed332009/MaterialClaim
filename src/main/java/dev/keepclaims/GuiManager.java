@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class GuiManager implements Listener {
     private static final MiniMessage MM = MiniMessage.miniMessage();
 
-    enum Type { MAIN, PAY, TRUST_ADD, TRUST_LIST, MY_CLAIMS, UNCLAIM, SETTINGS, PVP_SCOPE }
+    enum Type { MAIN, PAY, TRUST_ADD, TRUST_LIST, MY_CLAIMS, UNCLAIM, SETTINGS, PVP_SCOPE, MEMBER }
 
     static final class MenuHolder implements InventoryHolder {
         final Type type;
@@ -72,6 +72,10 @@ public final class GuiManager implements Listener {
         PendingText pending = PENDING.remove(p.getUniqueId());
         if (pending == null) {
             return false;
+        }
+        if (message != null && message.trim().equalsIgnoreCase("cancel")) {
+            plugin.send(p, "text-cancelled");
+            return true;
         }
         Claim c = plugin.claims().get(pending.key());
         if (c == null) {
@@ -170,6 +174,24 @@ public final class GuiManager implements Listener {
         return c != null && p.getUniqueId().equals(c.owner);
     }
 
+    /** Owner, manager or admin of a player territory: may pay upkeep. */
+    private boolean mayPay(Player p, Claim c) {
+        return c != null && !c.isServer() && plugin.settings().canManage(p, c);
+    }
+
+    /** Owner or admin of a player territory: may manage trusted players and unclaim. */
+    private boolean mayAdmin(Player p, Claim c) {
+        return c != null && !c.isServer() && plugin.settings().isOwnerOrAdmin(p, c);
+    }
+
+    private UUID parseId(String s) {
+        try {
+            return UUID.fromString(s);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
     private Claim claimAt(Player p, ChunkKey key) {
         return plugin.claims().get(key);
     }
@@ -217,15 +239,19 @@ public final class GuiManager implements Listener {
             lore.add("<yellow>Click to claim");
             String title = adjacent.isEmpty() ? "<green>Claim this chunk" : "<green>Add this chunk to your territory";
             set(inv, h, 10, item(Material.GRASS_BLOCK, title, lore), "claim");
-        } else if (isOwner(p, c)) {
-            set(inv, h, 10, item(Material.DIAMOND, "<aqua>Pay upkeep",
-                    "<gray>Add time to this claim.", "<yellow>Click to open"), "pay_menu");
-            set(inv, h, 11, item(Material.PLAYER_HEAD, "<green>Trusted players",
-                    "<gray>Choose who can build here.", "<yellow>Click to open"), "trust_menu");
-            set(inv, h, 13, item(Material.TNT, "<red>Unclaim",
-                    "<gray>Gives up this chunk.", "<gray>Upkeep is not refunded."), "unclaim_menu");
-            boolean manager = c.isManager(p.getUniqueId()) || p.hasPermission("materialclaim.admin");
-            if (manager) {
+        } else {
+            SettingsService svc = plugin.settings();
+            if (mayPay(p, c)) {
+                set(inv, h, 10, item(Material.DIAMOND, "<aqua>Pay upkeep",
+                        "<gray>Add time to this territory.", "<yellow>Click to open"), "pay_menu");
+            }
+            if (mayAdmin(p, c)) {
+                set(inv, h, 11, item(Material.PLAYER_HEAD, "<green>Trusted players",
+                        "<gray>Choose who can build or manage here.", "<yellow>Click to open"), "trust_menu");
+                set(inv, h, 13, item(Material.TNT, "<red>Unclaim",
+                        "<gray>Gives up this chunk.", "<gray>Upkeep is not refunded."), "unclaim_menu");
+            }
+            if (svc.canManage(p, c)) {
                 set(inv, h, 15, item(Material.COMPARATOR, "<gold>Settings",
                         "<gray>Protections and visitor rules.",
                         "<gray>Paid protections: <white>" + c.settings.activePaidCount(),
@@ -246,7 +272,7 @@ public final class GuiManager implements Listener {
         ClaimManager cm = plugin.claims();
         PaymentService pay = plugin.payments();
         Claim c = cm.get(key);
-        if (!isOwner(p, c)) {
+        if (!mayPay(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
@@ -308,7 +334,7 @@ public final class GuiManager implements Listener {
     public void openTrustAdd(Player p, ChunkKey key) {
         ClaimManager cm = plugin.claims();
         Claim c = cm.get(key);
-        if (!isOwner(p, c)) {
+        if (!mayAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
@@ -337,7 +363,7 @@ public final class GuiManager implements Listener {
     public void openTrustList(Player p, ChunkKey key) {
         ClaimManager cm = plugin.claims();
         Claim c = cm.get(key);
-        if (!isOwner(p, c)) {
+        if (!mayAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
@@ -352,12 +378,42 @@ public final class GuiManager implements Listener {
             set(inv, h, slot++, head(Bukkit.getOfflinePlayer(id),
                     "<green>" + esc(nameOf(id)),
                     "<gray>Level: <white>" + level.id,
-                    "<gray>Builder: build and break.",
-                    "<gray>Manager: also pay upkeep and free toggles.",
-                    "<yellow>Click to change level",
-                    "<red>Shift-click to remove"), "level:" + id);
+                    "<gray>Builder: build and use everything.",
+                    "<gray>Manager: also pays upkeep, buys protections",
+                    "<gray>and changes free settings.",
+                    "<yellow>Click to change level or remove"), "member:" + id);
         }
         set(inv, h, 49, item(Material.ARROW, "<yellow>Back"), "trust_menu");
+        fillEmpty(inv);
+        p.openInventory(inv);
+    }
+
+    /** Sub-menu for one trusted player: pick Builder or Manager, or remove them. */
+    public void openMember(Player p, ChunkKey key, UUID id) {
+        Claim c = plugin.claims().get(key);
+        if (!mayAdmin(p, c)) {
+            plugin.send(p, "not-your-claim");
+            return;
+        }
+        TrustList.Level current = c.trusted.levelOf(id);
+        MenuHolder h = new MenuHolder(Type.MEMBER, key);
+        Inventory inv = create(h, 27, "<dark_green><bold>" + esc(nameOf(id)));
+        set(inv, h, 4, head(Bukkit.getOfflinePlayer(id), "<green>" + esc(nameOf(id)),
+                "<gray>Level: <white>" + current.id), null);
+        ItemStack builder = item(Material.IRON_PICKAXE, "<white>Builder",
+                "<gray>Can build, break and use everything here.",
+                current == TrustList.Level.BUILDER ? "<green>Selected" : "<yellow>Click to select");
+        set(inv, h, 11, current == TrustList.Level.BUILDER ? glow(builder) : builder,
+                "setlevel:" + id + ":BUILDER");
+        ItemStack manager = item(Material.WRITABLE_BOOK, "<white>Manager",
+                "<gray>Builder, plus: pays upkeep, buys paid protections",
+                "<gray>and changes free settings. Cannot change who is trusted.",
+                current == TrustList.Level.MANAGER ? "<green>Selected" : "<yellow>Click to select");
+        set(inv, h, 13, current == TrustList.Level.MANAGER ? glow(manager) : manager,
+                "setlevel:" + id + ":MANAGER");
+        set(inv, h, 15, item(Material.BARRIER, "<red>Remove",
+                "<gray>They lose all access to this territory."), "removemember:" + id);
+        set(inv, h, 22, item(Material.ARROW, "<yellow>Back"), "trust_list");
         fillEmpty(inv);
         p.openInventory(inv);
     }
@@ -366,7 +422,7 @@ public final class GuiManager implements Listener {
 
     public void openUnclaim(Player p, ChunkKey key) {
         Claim c = plugin.claims().get(key);
-        if (!isOwner(p, c)) {
+        if (!mayAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
@@ -439,7 +495,8 @@ public final class GuiManager implements Listener {
         for (SettingsService.Flag f : new SettingsService.Flag[]{
                 SettingsService.Flag.EXPLOSIONS, SettingsService.Flag.PVP,
                 SettingsService.Flag.MOB_SPAWNING, SettingsService.Flag.FIRE_SPREAD}) {
-            set(inv, h, slot++, paidItem(p, c, f), "flag:" + f.id);
+            set(inv, h, slot++, f == SettingsService.Flag.PVP ? pvpItem(p, c) : paidItem(p, c, f),
+                    f == SettingsService.Flag.PVP ? "pvp_scope" : "flag:" + f.id);
         }
 
         set(inv, h, 18, item(Material.LIME_STAINED_GLASS_PANE, "<green>Free toggles",
@@ -507,6 +564,37 @@ public final class GuiManager implements Listener {
         return item(icon, (vanilla ? "<red>" : "<green>") + f.title, lore);
     }
 
+    /** The PvP button: choose who may fight. Everyone means no protection. */
+    private ItemStack pvpItem(Player p, Claim c) {
+        SettingsService svc = plugin.settings();
+        SettingsService.Flag f = SettingsService.Flag.PVP;
+        boolean active = !c.settings.pvp;
+        boolean locked = svc.isLocked(f) && !p.hasPermission("materialclaim.admin");
+        List<String> lore = new ArrayList<>();
+        lore.add("<gray>" + f.description);
+        lore.add("");
+        if (active) {
+            lore.add("<gray>Status: <green>Protected <gray>- may fight: <white>" + c.settings.pvpScope.label());
+            lore.add("<gray>Extra upkeep already included.");
+        } else {
+            lore.add("<gray>Status: <yellow>Everyone may fight <gray>(no protection)");
+            if (c.settings.isPurchased(f.id)) {
+                lore.add("<gray>Fee: <green>already bought <gray>- free to switch on");
+            } else if (svc.activationFee() <= 0) {
+                lore.add("<gray>Fee: <green>free");
+            } else {
+                lore.add("<gray>Fee: <white>" + trim(svc.activationFee()) + " hours of items <gray>(one-time)");
+            }
+            lore.add("<gray>Extra upkeep: <white>+" + Math.round(svc.upkeepMultiplier() * 100) + "% per cycle");
+        }
+        lore.add("<yellow>Click to choose who may fight");
+        if (locked) {
+            lore.add("<red>Locked by the server admin.");
+        }
+        return item(active ? Material.RED_DYE : Material.LIME_DYE,
+                (active ? "<green>" : "<red>") + f.title, lore);
+    }
+
     private ItemStack freeItem(Player p, Claim c, SettingsService.Flag f) {
         SettingsService svc = plugin.settings();
         boolean on = svc.get(c, f);
@@ -536,14 +624,18 @@ public final class GuiManager implements Listener {
         MenuHolder h = new MenuHolder(Type.PVP_SCOPE, key);
         Inventory inv = create(h, 27, "<dark_green><bold>PvP scope");
         set(inv, h, 4, item(Material.IRON_SWORD, "<gold>Who may PvP here",
-                "<gray>Only matters while PvP protection is ON.",
-                "<gray>Current: <white>" + c.settings.pvpScope.label()), null);
+                "<gray>Everyone = no protection (free).",
+                "<gray>Anything else turns PvP protection on.",
+                "<gray>Current: <white>" + (c.settings.pvp ? "everyone" : c.settings.pvpScope.label())), null);
         int slot = 10;
         for (TerritorySettings.PvpScope scope : TerritorySettings.PvpScope.values()) {
-            boolean cur = c.settings.pvpScope == scope;
+            boolean cur = scope == TerritorySettings.PvpScope.EVERYONE
+                    ? c.settings.pvp
+                    : !c.settings.pvp && c.settings.pvpScope == scope;
+            String name = scope == TerritorySettings.PvpScope.EVERYONE ? "everyone (no protection)" : scope.label();
             set(inv, h, slot++, item(cur ? Material.LIME_DYE : Material.GRAY_DYE,
-                    (cur ? "<green>" : "<white>") + scope.label(),
-                    "<yellow>Click to select"), "scope:" + scope.name());
+                    (cur ? "<green>" : "<white>") + name,
+                    cur ? "<green>Selected" : "<yellow>Click to select"), "scope:" + scope.name());
         }
         set(inv, h, 22, item(Material.ARROW, "<yellow>Back"), "settings");
         fillEmpty(inv);
@@ -674,27 +766,26 @@ public final class GuiManager implements Listener {
                 cm.trust(p, key, id, nameOf(id));
                 later(() -> openTrustAdd(p, key));
             }
-            case "level" -> {
-                Claim c = cm.get(key);
-                if (c == null || !c.isManager(p.getUniqueId())) {
-                    plugin.send(p, "not-your-claim");
-                    return;
+            case "member" -> {
+                UUID id = parseId(arg);
+                if (id != null) {
+                    later(() -> openMember(p, key, id));
                 }
-                UUID id;
-                try {
-                    id = UUID.fromString(arg);
-                } catch (IllegalArgumentException ex) {
-                    return;
+            }
+            case "setlevel" -> {
+                String[] bits = arg.split(":");
+                UUID id = bits.length == 2 ? parseId(bits[0]) : null;
+                if (id != null) {
+                    cm.trust(p, key, id, nameOf(id), TrustList.Level.parse(bits[1]));
+                    later(() -> openMember(p, key, id));
                 }
-                if (p.isSneaking()) {
+            }
+            case "removemember" -> {
+                UUID id = parseId(arg);
+                if (id != null) {
                     cm.untrust(p, key, id, nameOf(id));
-                } else {
-                    TrustList.Level current = c.trusted.levelOf(id);
-                    TrustList.Level next = current == TrustList.Level.BUILDER
-                            ? TrustList.Level.MANAGER : TrustList.Level.BUILDER;
-                    cm.trust(p, key, id, nameOf(id), next);
+                    later(() -> openTrustList(p, key));
                 }
-                later(() -> openTrustList(p, key));
             }
             case "untrust" -> {
                 UUID id = UUID.fromString(arg);
@@ -718,9 +809,8 @@ public final class GuiManager implements Listener {
                 if (flag == null) {
                     return;
                 }
-                // Shift-clicking PvP opens the scope sub-menu instead of toggling.
-                if (flag == SettingsService.Flag.PVP && p.isSneaking()
-                        && plugin.settings().isProtected(claimAt(p, key), flag)) {
+                // PvP has its own sub-menu with every choice.
+                if (flag == SettingsService.Flag.PVP) {
                     later(() -> openPvpScope(p, key));
                     return;
                 }
@@ -737,15 +827,7 @@ public final class GuiManager implements Listener {
                 if (c == null) {
                     return;
                 }
-                SettingsService svc = plugin.settings();
-                if (!c.isManager(p.getUniqueId()) && !p.hasPermission("materialclaim.admin")) {
-                    plugin.send(p, "not-your-claim");
-                    return;
-                }
-                c.settings.pvpScope = TerritorySettings.PvpScope.parse(arg);
-                cm.markDirty();
-                plugin.send(p, "flag-changed", "flag", "pvpscope",
-                        "value", c.settings.pvpScope.label());
+                cm.setPvpScope(p, c, TerritorySettings.PvpScope.parse(arg));
                 later(() -> openPvpScope(p, key));
             }
             case "text" -> {
@@ -759,8 +841,7 @@ public final class GuiManager implements Listener {
                 if (c == null) {
                     return;
                 }
-                SettingsService.Role role = plugin.settings().roleOf(p, c);
-                if (role != SettingsService.Role.ADMIN && role != SettingsService.Role.OWNER) {
+                if (!plugin.settings().canManage(p, c)) {
                     plugin.send(p, "not-your-claim");
                     return;
                 }

@@ -136,6 +136,7 @@ public final class ClaimManager {
         dst.mobGriefing = src.mobGriefing;
         dst.fluidFlow = src.fluidFlow;
         dst.cropTrample = src.cropTrample;
+        dst.pvpScope = src.pvpScope;
         dst.purchased.clear();
         dst.purchased.addAll(src.purchased);
     }
@@ -182,6 +183,7 @@ public final class ClaimManager {
             return;
         }
         YamlConfiguration y = YamlConfiguration.loadConfiguration(file);
+        boolean upgraded = false;
         if (y.isList("territories")) {
             for (Map<?, ?> m : y.getMapList("territories")) {
                 try {
@@ -196,6 +198,13 @@ public final class ClaimManager {
                     Object stored = m.get("settings");
                     if (stored instanceof Map<?, ?> sm) {
                         c.settings.readFrom(sm);
+                    }
+                    // Server claims (spawn, shops) are protected by default. Claims saved by an
+                    // older version have no marker, so they get the protected defaults once.
+                    boolean marked = stored instanceof Map<?, ?> sm2 && Boolean.TRUE.equals(sm2.get("server-protected"));
+                    if (owner == null && !marked) {
+                        c.settings.applyServerDefaults();
+                        upgraded = true;
                     }
                     c.trusted.readStored(m.get("trusted"));
                     if (m.get("chunks") instanceof List<?> cl) {
@@ -212,6 +221,9 @@ public final class ClaimManager {
             }
         } else if (y.isList("claims")) {
             migrateOld(y);
+        }
+        if (upgraded) {
+            markDirty();
         }
         plugin.getLogger().info("Loaded " + territories.size() + " territories (" + byChunk.size() + " chunks).");
     }
@@ -259,6 +271,7 @@ public final class ClaimManager {
         for (Old o : olds) {
             if (o.owner == null) {
                 Claim c = new Claim(null, "Server", o.created, Long.MAX_VALUE);
+                c.settings.applyServerDefaults();
                 c.chunks.add(o.key);
                 register(c);
             } else {
@@ -335,7 +348,11 @@ public final class ClaimManager {
             m.put("created", c.created);
             m.put("paid-until", c.paidUntil);
             m.put("trusted", c.trusted.toMap());
-            m.put("settings", c.settings.toMap());
+            Map<String, Object> settingsMap = c.settings.toMap();
+            if (c.isServer()) {
+                settingsMap.put("server-protected", true);
+            }
+            m.put("settings", settingsMap);
             m.put("chunks", c.chunks.stream().map(ClaimManager::keyString).toList());
             out.add(m);
         }
@@ -548,10 +565,22 @@ public final class ClaimManager {
         }
         Set<Claim> adjacent = adjacentOwned(p.getUniqueId(), key);
         int newSize = 1;
+        Claim base = null;
         for (Claim a : adjacent) {
             newSize += a.size();
+            if (base == null || a.created < base.created) {
+                base = a;
+            }
         }
-        double f = newSize * perChunkMultiplier(newSize);
+        // Settings of the merged territory: a paid protection stays on if any part had it.
+        TerritorySettings merged = base == null ? plugin.settings().defaults() : base.settings.copy();
+        for (Claim a : adjacent) {
+            if (a != base) {
+                merged.absorb(a.settings);
+            }
+        }
+        double factor = 1.0 + plugin.settings().upkeepMultiplier() * merged.activePaidCount();
+        double f = newSize * perChunkMultiplier(newSize) * factor;
         double price = plugin.getConfig().getDouble("initial-hours", 96);
         long now = System.currentTimeMillis();
         // Upkeep already banked in the territories this chunk joins.
@@ -582,13 +611,15 @@ public final class ClaimManager {
         long remaining = Math.min((long) (pool / f * HOUR_MS), maxPrepaidMs());
 
         Claim target;
-        if (adjacent.isEmpty()) {
+        if (base == null) {
             target = new Claim(p.getUniqueId(), p.getName(), now, now + remaining);
+            copySettings(plugin.settings().defaults(), target.settings);
         } else {
-            Iterator<Claim> it = adjacent.iterator();
-            target = it.next();
-            while (it.hasNext()) {
-                Claim other = it.next();
+            target = base;
+            for (Claim other : adjacent) {
+                if (other == base) {
+                    continue;
+                }
                 target.chunks.addAll(other.chunks);
                 for (var e : other.trusted.entries().entrySet()) {
                     TrustList.Level current = target.trusted.levelOf(e.getKey());
@@ -597,6 +628,7 @@ public final class ClaimManager {
                     }
                 }
                 target.created = Math.min(target.created, other.created);
+                target.settings.absorb(other.settings);
                 territories.remove(other);
             }
         }
@@ -615,7 +647,7 @@ public final class ClaimManager {
             plugin.send(p, "no-claim-here");
             return;
         }
-        if (!p.getUniqueId().equals(c.owner)) {
+        if (!plugin.settings().canManage(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
@@ -655,7 +687,7 @@ public final class ClaimManager {
             plugin.send(p, "no-claim-here");
             return;
         }
-        if (!p.getUniqueId().equals(c.owner)) {
+        if (!plugin.settings().isOwnerOrAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
@@ -691,11 +723,11 @@ public final class ClaimManager {
     /** Grants (or upgrades) trust. A null level means Builder. */
     public void trust(Player p, ChunkKey key, UUID target, String name, TrustList.Level level) {
         Claim c = byChunk.get(key);
-        if (c == null || !c.isManager(p.getUniqueId())) {
+        if (c == null || !plugin.settings().isOwnerOrAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
-        if (target.equals(p.getUniqueId())) {
+        if (target.equals(p.getUniqueId()) || target.equals(c.owner)) {
             plugin.send(p, "trust-self");
             return;
         }
@@ -711,7 +743,7 @@ public final class ClaimManager {
 
     public void untrust(Player p, ChunkKey key, UUID target, String name) {
         Claim c = byChunk.get(key);
-        if (c == null || !p.getUniqueId().equals(c.owner)) {
+        if (c == null || !plugin.settings().isOwnerOrAdmin(p, c)) {
             plugin.send(p, "not-your-claim");
             return;
         }
@@ -785,6 +817,11 @@ public final class ClaimManager {
             plugin.send(p, "flag-purchased", "flag", flag.title,
                     "fee", Util.trim(fee));
         }
+        if (flag == SettingsService.Flag.PVP && !value
+                && c.settings.pvpScope == TerritorySettings.PvpScope.EVERYONE) {
+            // "Everyone may fight" is no protection at all, so protecting starts at "nobody".
+            c.settings.pvpScope = TerritorySettings.PvpScope.NOBODY;
+        }
         double oldRate = rate(c);
         svc.set(c, flag, value);
         // Price the already-banked upkeep at the new rate, so the extra upkeep is felt
@@ -795,12 +832,42 @@ public final class ClaimManager {
         return true;
     }
 
-    /** Sets a free text value (name or messages). Managers may not rename territories. */
+    /**
+     * The single PvP control. EVERYONE means no protection (free). Any other choice turns
+     * PvP protection on, which charges the one-time fee the first time, and picks who may
+     * still fight.
+     */
+    public boolean setPvpScope(Player p, Claim c, TerritorySettings.PvpScope scope) {
+        SettingsService svc = plugin.settings();
+        String refuse = svc.refusal(p, c, SettingsService.Flag.PVP);
+        if (refuse != null) {
+            plugin.sendMini(p, refuse);
+            return false;
+        }
+        if (scope == TerritorySettings.PvpScope.EVERYONE) {
+            if (!c.settings.pvp && !changeFlag(p, c, SettingsService.Flag.PVP, true)) {
+                return false;
+            }
+            c.settings.pvpScope = TerritorySettings.PvpScope.EVERYONE;
+        } else {
+            TerritorySettings.PvpScope previous = c.settings.pvpScope;
+            c.settings.pvpScope = scope;
+            if (c.settings.pvp && !changeFlag(p, c, SettingsService.Flag.PVP, false)) {
+                c.settings.pvpScope = previous;
+                return false;
+            }
+        }
+        markDirty();
+        plugin.send(p, "flag-changed", "flag", "PvP", "value", c.settings.pvpScope.label());
+        return true;
+    }
+
+    /** Sets a free text value (name or messages). Owner, managers and admins may do this. */
     public boolean setText(Player p, Claim c, SettingsService.TextInput field, String value) {
         SettingsService svc = plugin.settings();
         SettingsService.Role role = svc.roleOf(p, c);
         boolean admin = role == SettingsService.Role.ADMIN;
-        if (!admin && role != SettingsService.Role.OWNER) {
+        if (!svc.canManage(p, c)) {
             plugin.send(p, "not-your-claim");
             return false;
         }
@@ -860,6 +927,7 @@ public final class ClaimManager {
                     continue;
                 }
                 Claim c = new Claim(null, "Server", now, Long.MAX_VALUE);
+                c.settings.applyServerDefaults();
                 c.chunks.add(k);
                 register(c);
                 count++;
@@ -888,19 +956,20 @@ public final class ClaimManager {
         long grace = graceMs();
         List<Claim> dead = new ArrayList<>();
         for (Claim c : territories) {
-            if (c.isServer() || c.paidUntil + grace >= now) {
+            if (c.isServer()) {
                 continue;
             }
-            // Out of upkeep: drop paid protections first, which lowers the upkeep rate
-            // and may give the owner more time. Only unclaim when that still is not enough.
-            if (dropPaidProtections(c)) {
+            // Overdue: paid protections switch off at once (they are not being paid for).
+            // They are remembered as bought, so they can be switched back on for free.
+            if (c.paidUntil < now && dropPaidProtections(c)) {
                 Player owner = Bukkit.getPlayer(c.owner);
                 if (owner != null) {
                     plugin.send(owner, "protections-dropped", "name", c.displayName());
                 }
-                continue;
             }
-            dead.add(c);
+            if (c.paidUntil + grace < now) {
+                dead.add(c);
+            }
         }
         if (dead.isEmpty()) {
             return;

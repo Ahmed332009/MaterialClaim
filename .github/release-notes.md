@@ -1,27 +1,19 @@
-**Bug fix: paid protections now really charge, and only once.**
+**Settings fixes: managers, defaults, PvP, fire, animals, crops, merging, Bedrock menus.**
 
-In 0.3.0 the settings menu showed a fee for each paid protection, but the fee was not
-applied the way it should have been. This release fixes it.
+This release fixes things in the 0.3.x settings system that did not match how it was meant to work.
 
-- **The fee is now actually taken.** Clicking a paid protection removes the items from
-  your inventory straight away. If you cannot afford it, the protection stays off and
-  nothing is taken.
-- **The fee is charged only once per protection, per territory.** After the first
-  purchase that protection is yours: turn it off and on as often as you like, at no
-  extra cost. The menu shows "already bought - free to switch on" instead of a price.
-- **The fee is 24 hours of item value** (was 100), which is 2 diamonds, 4 gold ingots or
-  8 iron ingots. Change `paid-protection-activation-fee` in `config.yml` to alter it;
-  `0` makes protections free.
-- **The extra upkeep is now felt immediately.** Activating a protection re-prices the
-  upkeep you have already banked at the new rate, so a territory with 100 hours banked
-  drops to 80 hours when a protection adds 25%. Previously the increase only appeared on
-  your next payment. Dropping protections when upkeep runs out now refunds the
-  difference in the same way.
+- **Managers can now do their job.** A manager can pay upkeep, buy and remove paid protections (paying the fee from their own inventory), and change free toggles, the territory name and the entry and leave messages. Managers can no longer add or remove trusted players: only the owner or an admin can. Managers and admins now see the Pay and Settings buttons in the menu.
+- **Safe defaults.** A new territory starts with mob griefing, fluid flow and crop trampling blocked. Server claims (spawn, shops) start fully protected: no explosions, PvP, mob spawning or fire spread. Older server claims are upgraded once when the plugin starts.
+- **PvP protection really works.** One control with four choices: everyone (no protection), visitors only, trusted only, nobody. Buying protection starts at nobody.
+- **Fire protection is real.** Fire from lava, lightning and spread is only stopped in territories that bought fire protection.
+- **Free toggles now do what they say.** Crop trampling, visitor animals and vehicles (including boats and minecarts) follow their toggles.
+- **Mob spawn protection** only stops mobs that appear on their own, not spawn eggs, commands or other plugins.
+- **Merging territories keeps every protection and purchase**, and the extra upkeep is counted correctly. New territories use the defaults from config.yml.
+- **Overdue territories lose their unpaid protections straight away** (before, it only happened at the end of the grace period).
+- **Bedrock friendly menus.** Trusted players and PvP are changed with normal taps, no shift-click.
+- **Typing "cancel"** when asked for a name or message now cancels. Entry and leave messages are plain text, so they cannot carry click events.
 
-Upgrading from 0.3.0 needs nothing but the new jar. Territories keep their settings,
-trust lists and banked upkeep; the first activation after upgrading charges the new
-one-time 24 hour fee, then never again.
+Upgrading from 0.3.1 needs only the new jar. Territories already saved keep their current toggle values: open Settings and switch mob griefing, fluid flow and crop trampling to Blocked if you want the safe setting.
 
 - Chest menu works on Java and Bedrock (Geyser).
-- Needs Paper 1.21.1+ and Java 21+. These settings are new and have not been tested on a
-  live server yet: please open an issue if something misbehaves.
+- Needs Paper 1.21.1+ and Java 21+. These settings have not been tested on a live server yet: please open an issue if something misbehaves.
