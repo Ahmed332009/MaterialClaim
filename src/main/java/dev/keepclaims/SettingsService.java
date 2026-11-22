@@ -1,12 +1,12 @@
 package dev.keepclaims;
 
 import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * The catalogue of territory flags plus the rules for who may change them and what
