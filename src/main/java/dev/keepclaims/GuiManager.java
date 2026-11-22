@@ -541,8 +541,9 @@ public final class GuiManager implements Listener {
         head.add("<gray>Chunks: <white>" + c.size());
         head.add("<gray>Protections bought: <white>" + c.settings.purchasedPaidCount() + "<gray> of 4"
                 + " <gray>(<white>" + c.settings.activePaidCount() + " ON<gray>)");
-        head.add("<gray>Upkeep left: <white>" + Util.duration(cm.remainingMs(c)));
         head.add("<gray>Upkeep rate: <white>" + trim(cm.rate(c)) + " chunk-hours/h");
+        // Show the clock on this screen too, so a purchase visibly costs 24 hours.
+        head.add("<gray>Upkeep left: <white>" + Util.duration(cm.remainingMs(c)));
         set(inv, h, 4, item(Material.PAPER, "<gold>Settings", head), null);
 
         set(inv, h, 0, item(Material.RED_STAINED_GLASS_PANE, "<dark_red>Paid protections",
@@ -901,10 +902,10 @@ public final class GuiManager implements Listener {
                     return;
                 }
                 boolean owned = c.settings.isPurchased(flag.id);
-                // An unowned protection is always a purchase, even if it happens to be
-                // switched on already (an admin toggled it, or it came from older data),
-                // because clicking an unowned item must be what buys it.
-                if (!owned) {
+                // Only PAID protections can be bought. Free toggles are never "owned", so
+                // without this check switching a free toggle ON opened a bogus "Buy ... for
+                // 24 hours?" screen.
+                if (flag.isPaid() && !owned && !plugin.settings().get(c, flag)) {
                     // Buying always needs a confirmation screen. Check the upkeep up front so
                     // an unaffordable purchase is refused before the player is even asked.
                     if (cm.remainingMs(c) < ClaimManager.PROTECTION_COST_MS) {

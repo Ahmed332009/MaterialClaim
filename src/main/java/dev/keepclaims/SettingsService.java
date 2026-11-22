@@ -192,17 +192,9 @@ public final class SettingsService {
         }
     }
 
-    /**
-     * True when the paid protection is switched on, so the listeners must enforce it.
-     *
-     * Deliberately keyed on "switched on" rather than on ownership: what the menu shows as
-     * ON must be what is actually enforced. Ownership only decides whether a purchase is
-     * still owed (see ClaimManager.changeFlag); it must never make an ON protection
-     * silently stop working, which is what would happen for a protection an admin switched
-     * on, or one left on by older data.
-     */
+    /** True when the paid protection is bought and switched on, so it must be enforced. */
     public boolean isProtected(Claim c, Flag f) {
-        return f.isPaid() && c.settings.isEnabled(f.id);
+        return f.isPaid() && c.settings.isProtecting(f.id);
     }
 
     // ------------------------------------------------------------- permissions

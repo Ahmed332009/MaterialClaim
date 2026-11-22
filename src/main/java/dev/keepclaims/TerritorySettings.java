@@ -25,9 +25,8 @@ import java.util.Set;
  *   <li>{@code enabled} - the protection is switched ON right now and is enforced.</li>
  * </ul>
  *
- * What the listeners enforce is <b>enabled</b> alone: ON means protecting. Ownership
- * ({@code purchased}) only decides whether a purchase is still owed, so it can never make a
- * protection the player sees as ON silently stop working. Neither flag is ever refunded.
+ * A paid protection only blocks anything when it is <b>both</b> purchased and enabled.
+ * When it is not enabled vanilla behaviour applies. Neither flag is ever refunded.
  *
  * Free toggles never cost anything and have no purchase step. A value of true means
  * visitors are allowed to do that thing.
@@ -202,14 +201,6 @@ public final class TerritorySettings {
         };
     }
 
-    /**
-     * Turns one protection on or off. This changes <b>only</b> the enabled flag.
-     *
-     * It deliberately does not touch {@link #purchased}: ownership must only ever be
-     * granted by a path that actually charged for it (see ClaimManager.changeFlag), or a
-     * free toggle or an admin click would quietly mark a protection as bought and the
-     * 24 hour purchase could never be charged again.
-     */
     public void setEnabled(String id, boolean enabled) {
         switch (id) {
             case "explosions" -> explosionsEnabled = enabled;
@@ -218,6 +209,11 @@ public final class TerritorySettings {
             case "fire-spread" -> fireSpreadEnabled = enabled;
             default -> {
             }
+        }
+        // Something being enforced implies it was bought. Payment is handled separately
+        // by the manager, which charges before calling this.
+        if (enabled) {
+            purchased.add(id);
         }
     }
 
@@ -229,6 +225,11 @@ public final class TerritorySettings {
     /** Records a paid protection as bought. Returns false if it already was. */
     public boolean markPurchased(String id) {
         return purchased.add(id);
+    }
+
+    /** True when the protection should block anything: bought and switched on. */
+    public boolean isProtecting(String id) {
+        return isPurchased(id) && isEnabled(id);
     }
 
     /**
@@ -268,6 +269,9 @@ public final class TerritorySettings {
             enabled = def;
         }
         setEnabled(id, enabled);
+        if (enabled && !(enabledRaw instanceof Boolean)) {
+            markPurchased(id);
+        }
     }
 
     // ------------------------------------------------------------- persistence
