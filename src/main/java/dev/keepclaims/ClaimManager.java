@@ -136,6 +136,8 @@ public final class ClaimManager {
         dst.mobGriefing = src.mobGriefing;
         dst.fluidFlow = src.fluidFlow;
         dst.cropTrample = src.cropTrample;
+        dst.purchased.clear();
+        dst.purchased.addAll(src.purchased);
     }
 
     public int ownedChunks(UUID owner) {
@@ -722,11 +724,31 @@ public final class ClaimManager {
     // --------------------------------------------------------------- settings
 
     /**
+     * Re-prices remaining banked upkeep so a change in the territory's upkeep rate
+     * neither creates nor destroys chunk-hours. Activating a paid protection therefore
+     * takes its extra upkeep straight out of banked time, and turning the protection
+     * off hands back the portion that is no longer being charged.
+     */
+    private void rebasePaidUntil(Claim c, double oldRate) {
+        long now = System.currentTimeMillis();
+        if (c.paidUntil <= now) {
+            return;
+        }
+        double newRate = rate(c);
+        if (oldRate <= 0 || !(newRate > 0) || Math.abs(newRate - oldRate) < 1e-9) {
+            return;
+        }
+        double chunkHours = (c.paidUntil - now) / (double) HOUR_MS * oldRate;
+        c.paidUntil = now + Math.min((long) (chunkHours / newRate * HOUR_MS), maxPrepaidMs());
+    }
+
+    /**
      * Applies a flag change, charging for it when needed.
      *
-     * Turning a paid protection ON (protecting the territory) charges the activation
-     * fee plus the extra upkeep that protection adds from now on. Turning it OFF again
-     * (back to vanilla) is free and refunds nothing. Admins never pay.
+     * Switching a paid protection ON (protecting the territory) charges the activation
+     * fee the first time only; afterwards the purchase is remembered and the protection
+     * can be toggled freely. Every activation also raises the upkeep rate, which is
+     * applied to the banked time immediately. Admins never pay.
      *
      * Returns true when the change was applied.
      */
@@ -742,22 +764,32 @@ public final class ClaimManager {
                     "value", value ? "on" : "off");
             return true;
         }
-        boolean paying = flag.isPaid() && !value && svc.roleOf(p, c) != SettingsService.Role.ADMIN;
-        if (paying) {
-            // Fee, plus the upkeep the new protection will add, both in chunk-hours.
+        boolean admin = svc.roleOf(p, c) == SettingsService.Role.ADMIN;
+        // The activation fee is a one-time purchase: it is charged the first time this
+        // protection is switched on, and never again for this territory.
+        boolean feeDue = flag.isPaid() && !value && !admin
+                && !c.settings.isPurchased(flag.id)
+                && svc.activationFeeFor(c) > 0;
+        if (feeDue) {
             double fee = svc.activationFeeFor(c);
-            double extraRate = baseRate(c) * svc.upkeepMultiplier();
-            double total = fee + extraRate;
-            double mult = baseRate(c);
-            PaymentService.Result r = plugin.payments().charge(p, total / mult, mult,
+            // Item values are worth N hours for one chunk at multiplier 1.0, so charging
+            // at 1.0 makes the fee a flat 24 hours of item value whatever the size.
+            PaymentService.Result r = plugin.payments().charge(p, fee, 1.0,
                     plugin.payments().choiceOf(p));
             if (!r.ok()) {
                 plugin.send(p, "flag-cannot-afford", "flag", flag.title);
                 plugin.sendMini(p, r.error());
                 return false;
             }
+            c.settings.markPurchased(flag.id);
+            plugin.send(p, "flag-purchased", "flag", flag.title,
+                    "fee", Util.trim(fee));
         }
+        double oldRate = rate(c);
         svc.set(c, flag, value);
+        // Price the already-banked upkeep at the new rate, so the extra upkeep is felt
+        // immediately instead of only on the next payment.
+        rebasePaidUntil(c, oldRate);
         markDirty();
         plugin.send(p, "flag-changed", "flag", flag.title, "value", value ? "on" : "off");
         return true;
@@ -801,12 +833,15 @@ public final class ClaimManager {
      */
     public boolean dropPaidProtections(Claim c) {
         TerritorySettings s = c.settings;
+        double oldRate = rate(c);
         boolean changed = false;
         if (!s.explosionDamage) { s.explosionDamage = true; changed = true; }
         if (!s.pvp) { s.pvp = true; changed = true; }
         if (!s.mobSpawning) { s.mobSpawning = true; changed = true; }
         if (!s.fireSpread) { s.fireSpread = true; changed = true; }
         if (changed) {
+            // Protections are gone, so the owner should stop being charged for them.
+            rebasePaidUntil(c, oldRate);
             markDirty();
         }
         return changed;

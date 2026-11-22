@@ -33,4 +33,9 @@ final class Util {
     static String pretty(Material m) {
         return m.name().toLowerCase().replace('_', ' ');
     }
+
+    /** 24.0 becomes "24", 24.5 becomes "24.5". */
+    static String trim(double v) {
+        return v == Math.rint(v) ? String.valueOf((long) v) : String.format("%.1f", v);
+    }
 }

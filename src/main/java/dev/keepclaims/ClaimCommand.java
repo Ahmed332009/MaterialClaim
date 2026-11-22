@@ -204,6 +204,11 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
             String shown = f.isPaid()
                     ? (value ? "<yellow>off<gray> (vanilla)" : "<green>ON<gray> (protected)")
                     : (value ? "<green>on" : "<red>off");
+            if (f.isPaid()) {
+                shown += c.settings.isPurchased(f.id)
+                        ? " <dark_gray>[bought, free to toggle]"
+                        : " <dark_gray>[fee " + Util.trim(svc.activationFeeFor(c)) + "h once]";
+            }
             plugin.sendMini(p, "<gray>- <white>" + f.id + "<gray>: " + shown);
         }
         plugin.sendMini(p, "<gray>- <white>pvp-scope<gray>: <white>" + c.settings.pvpScope.label());

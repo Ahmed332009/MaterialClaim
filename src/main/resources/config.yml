@@ -77,8 +77,10 @@ public-blocks:
 territory-settings:
   # Each active paid protection adds this fraction to the territory's upkeep.
   paid-protection-upkeep-multiplier: 0.25
-  # One-time fee to turn a paid protection on, in hours of item value.
-  paid-protection-activation-fee: 100.0
+  # One-time fee to switch a paid protection on, in hours of item value (24 = 2 diamonds,
+  # 8 gold ingots or 16 iron ingots). Bought once per protection per territory: after that
+  # the owner can turn it on and off as often as they like at no extra cost. 0 = no fee.
+  paid-protection-activation-fee: 24.0
   defaults:
     explosion-damage: true      # true = vanilla (not protected)
     pvp: true
@@ -127,6 +129,7 @@ messages:
   server-claimed: "<green>Claimed {count} chunk(s) for the server."
   admin-unclaimed: "<yellow>The whole connected territory was removed."
   flag-changed: "<green>{flag} is now {value}."
+  flag-purchased: "<green>Paid {fee} hours of items. {flag} is yours to toggle for free from now on."
   flag-unchanged: "<yellow>{flag} is already {value}."
   flag-cannot-afford: "<red>You cannot afford the fee for {flag}. The protection was not enabled."
   flag-locked: "<red>That setting is locked by the server admin."

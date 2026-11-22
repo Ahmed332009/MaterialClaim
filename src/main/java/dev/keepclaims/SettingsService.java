@@ -79,7 +79,7 @@ public final class SettingsService {
 
     private final KeepClaims plugin;
     private double upkeepMultiplier = 0.25;
-    private double activationFee = 100.0;
+    private double activationFee = 24.0;
     private TerritorySettings defaults = new TerritorySettings();
     private final List<String> locked = new ArrayList<>();
 
@@ -92,13 +92,13 @@ public final class SettingsService {
         ConfigurationSection sec = plugin.getConfig().getConfigurationSection("territory-settings");
         if (sec == null) {
             upkeepMultiplier = 0.25;
-            activationFee = 100.0;
+            activationFee = 24.0;
             defaults = new TerritorySettings();
             locked.clear();
             return;
         }
         upkeepMultiplier = sec.getDouble("paid-protection-upkeep-multiplier", 0.25);
-        activationFee = sec.getDouble("paid-protection-activation-fee", 100.0);
+        activationFee = sec.getDouble("paid-protection-activation-fee", 24.0);
         defaults = TerritorySettings.fromConfig(sec.getConfigurationSection("defaults"));
         locked.clear();
         // "locked" may be written as a map of flag: true (preferred) or a plain list.

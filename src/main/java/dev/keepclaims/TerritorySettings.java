@@ -2,9 +2,14 @@ package dev.keepclaims;
 
 import org.bukkit.configuration.ConfigurationSection;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Per-territory settings.
@@ -58,6 +63,12 @@ public final class TerritorySettings {
     public boolean cropTrample = true;
 
     // --- extra
+    /**
+     * Ids of paid protections this territory has already bought (e.g. "explosions").
+     * The activation fee is charged once per protection; after that the flag may be
+     * turned on and off as often as the owner likes at no extra cost.
+     */
+    public final Set<String> purchased = new LinkedHashSet<>();
     public PvpScope pvpScope = PvpScope.EVERYONE;
     public String customName = "";
     public String entryMessage = "";
@@ -97,6 +108,7 @@ public final class TerritorySettings {
         s.mobGriefing = mobGriefing;
         s.fluidFlow = fluidFlow;
         s.cropTrample = cropTrample;
+        s.purchased.addAll(purchased);
         s.pvpScope = pvpScope;
         s.customName = customName;
         s.entryMessage = entryMessage;
@@ -114,6 +126,35 @@ public final class TerritorySettings {
         return n;
     }
 
+    /** True when this paid protection was already bought, so toggling it is free. */
+    public boolean isPurchased(String id) {
+        return purchased.contains(id);
+    }
+
+    /** Records a paid protection as bought. Returns false if it already was. */
+    public boolean markPurchased(String id) {
+        return purchased.add(id);
+    }
+
+    /**
+     * Reads the stored "purchased" list. A missing key means nothing has been bought
+     * yet, which is also the case for territories created before the fee existed: they
+     * pay the one-time fee on their next activation like any other territory.
+     */
+    private void readPurchased(Object raw) {
+        purchased.clear();
+        if (raw == null) {
+            return;
+        }
+        Collection<?> list = raw instanceof Collection<?> c ? c : List.of(raw);
+        for (Object o : list) {
+            SettingsService.Flag f = SettingsService.Flag.parse(String.valueOf(o));
+            if (f != null) {
+                purchased.add(f.id);
+            }
+        }
+    }
+
     // ------------------------------------------------------------- persistence
 
     public Map<String, Object> toMap() {
@@ -128,6 +169,7 @@ public final class TerritorySettings {
         m.put("mob-griefing", mobGriefing);
         m.put("fluid-flow", fluidFlow);
         m.put("crop-trample", cropTrample);
+        m.put("purchased", new ArrayList<>(purchased));
         m.put("pvp-scope", pvpScope.name());
         m.put("name", customName);
         m.put("entry-message", entryMessage);
@@ -150,6 +192,7 @@ public final class TerritorySettings {
         mobGriefing = bool(m, "mob-griefing", mobGriefing);
         fluidFlow = bool(m, "fluid-flow", fluidFlow);
         cropTrample = bool(m, "crop-trample", cropTrample);
+        readPurchased(m.get("purchased"));
         if (m.get("pvp-scope") != null) {
             pvpScope = PvpScope.parse(String.valueOf(m.get("pvp-scope")));
         }
@@ -173,6 +216,7 @@ public final class TerritorySettings {
         mobGriefing = sec.getBoolean("mob-griefing", mobGriefing);
         fluidFlow = sec.getBoolean("fluid-flow", fluidFlow);
         cropTrample = sec.getBoolean("crop-trample", cropTrample);
+        readPurchased(sec.get("purchased"));
         pvpScope = PvpScope.parse(sec.getString("pvp-scope", pvpScope.name()));
         customName = sec.getString("name", customName);
         entryMessage = sec.getString("entry-message", entryMessage);

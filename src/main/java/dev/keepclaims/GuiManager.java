@@ -480,13 +480,21 @@ public final class GuiManager implements Listener {
         if (vanilla) {
             lore.add("<gray>Status: <yellow>Off (vanilla behaviour)");
             lore.add("<gray>Turn on to protect this territory.");
-            lore.add("<gray>Fee: <white>" + trim(svc.activationFee()) + " hours of items");
+            if (c.settings.isPurchased(f.id)) {
+                lore.add("<gray>Fee: <green>already bought <gray>- free to switch on");
+            } else if (svc.activationFee() <= 0) {
+                lore.add("<gray>Fee: <green>free");
+            } else {
+                lore.add("<gray>Fee: <white>" + trim(svc.activationFee())
+                        + " hours of items <gray>(one-time)");
+            }
             lore.add("<gray>Extra upkeep: <white>+" + Math.round(svc.upkeepMultiplier() * 100)
                     + "% per cycle");
             lore.add("<yellow>Click to protect");
         } else {
             lore.add("<gray>Status: <green>ON (protecting)");
             lore.add("<gray>Extra upkeep already included.");
+            lore.add("<gray>Switching it off is free and keeps the purchase.");
             lore.add("<yellow>Click to turn protection off");
         }
         if (f == SettingsService.Flag.PVP) {
