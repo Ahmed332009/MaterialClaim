@@ -2,7 +2,6 @@ package dev.keepclaims;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -104,7 +103,9 @@ public final class Claim {
 
     @Override
     public int hashCode() {
-        return Objects.hashCode(owner) * 31 + created;
+        // Identity based, matching equals: two Claim objects are the same territory only
+        // when they are the same object.
+        return System.identityHashCode(this);
     }
 
     /** Name shown to players: the custom territory name if set, else the owner name. */
