@@ -1,9 +1,13 @@
 name: Build
 
-on: [push, pull_request]
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -37,6 +41,19 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: KeepClaims
+          name: MaterialClaim
           path: build/libs/*.jar
           if-no-files-found: error
+
+      # On a v* tag, publish the jar as a GitHub Release. Running this inside the
+      # build job means the release always uses the jar that just passed the
+      # verification step above.
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          JAR=$(ls build/libs/*.jar | head -n 1)
+          gh release create "$GITHUB_REF_NAME" "$JAR" \
+            --title "MaterialClaim $GITHUB_REF_NAME" \
+            --generate-notes
