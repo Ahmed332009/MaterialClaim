@@ -1,50 +1,32 @@
-**Adds a full staff command set for managing land you do not own** - delete it, transfer it,
-wipe a player's land, override claim limits, and set upkeep clocks. Modelled on the admin
-commands in GriefPrevention and Lands so the same jobs are findable.
+**`/claims admin serverclaim` now gives you a netherite shovel to pick the land yourself**,
+instead of only offering fixed-size squares.
 
-## `/claims admin help`
+## How it works now
 
-Tab-complete lists all of these, and running `/claims admin` with no arguments prints the
-list. Everything needs `materialclaim.admin` (ops have it).
+1. Stand anywhere and run **`/claims admin serverclaim`**
+2. You get a **netherite shovel named `Server Claim Tool`** in your hand, with instructions in
+   its description
+3. **Left click** a block for the first corner
+4. **Right click** the opposite corner
 
-## Managing land
+That rectangle becomes **server land**, and **the shovel disappears**. Any size you like -
+47x47, 100x37, 1x1 - the old fixed steps (31, 63, 95...) are no longer a limitation.
 
-| Command | What it does |
-| --- | --- |
-| `/claims admin delete` | Removes the **whole** territory you stand in, every rectangle of it, whoever owns it |
-| `/claims admin deleteplayer <player>` | Removes **all** land owned by a player |
-| `/claims admin deleteserver` | Removes every server claim |
-| `/claims admin transfer <player>` | Gives the territory you stand in to another player |
-| `/claims admin serverclaim [radius]` | Protects a square around you (radius 0-10 chunks) |
-| `/claims admin unclaim` | Removes the whole territory you stand in (same as delete) |
+**Right click the air** to cancel; the tool is taken back. Switching to another item or
+logging out also cancels.
 
-From GriefPrevention these are `/deleteclaim`, `/deleteallclaims`, `/deletealladminclaims`
-and `/transferclaim`.
+## What it will not do
 
-- **Transfer** keeps the territory's settings and its upkeep clock, but **clears the trust
-  list**, so the previous owner's friends lose access. That is stated in the confirmation.
-- **`deleteserver` refuses to delete more than 500 server claims in one command**, so a
-  mistyped command cannot wipe a whole spawn network. Delete in batches.
-- Nothing is ever refunded by any of these.
+- **It never takes a player's land.** If someone's claim is inside your rectangle, their
+  blocks are skipped and only the free land becomes server land. Their claim is untouched.
+- **It does not duplicate an existing server claim.** Selecting land that touches server
+  land merges into that claim rather than making a second one.
+- **A selection covering only claimed land claims nothing** and tells you so.
 
-## Limits and time
+## The old way still works
 
-| Command | What it does |
-| --- | --- |
-| `/claims admin setlimit <player> <blocks>` | Sets that player's total land limit. **0 clears it** back to the default |
-| `/claims admin setupkeep <player> <hours>` | Sets the upkeep clock on all their territories, clamped to the max-prepaid cap |
-| `/claims admin setupkeep <player> status` | Shows the clock and status of each of their territories |
-
-`setlimit` is the equivalent of GriefPrevention's `/adjustbonusclaimblocks`. Overrides are
-stored in `limits.yml` and survive restarts.
-
-## Look things up
-
-| Command | What it does |
-| --- | --- |
-| `/claims admin list <player>` | Every territory a player owns, with sizes and upkeep |
-| `/claims admin who` | Every claim in the world you are standing in |
-| `/claims admin info [player]` | Detailed readout: owner and UUID, rectangles, world, upkeep rate, protections, trusted count |
+`/claims admin serverclaim <0-10>` still claims a centred square in chunks (radius 0 = 31x31,
+10 = 351x351), so existing habits and scripts keep working. Tab-complete offers the numbers.
 
 ## MaterialClaim_Chunk
 
