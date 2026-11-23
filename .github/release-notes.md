@@ -1,47 +1,40 @@
-**Two plugins in one release. Install ONE of them, not both.**
+**Border on right click, brighter particles, a shorter selection outline, and a first-join
+welcome.** Everything from 0.4.1 keeps working.
 
-| Jar | Plugin name | Claiming |
-| --- | --- | --- |
-| `MaterialClaim_Chunk-0.4.0.jar` | `MaterialClaim_Chunk` | Claim one 16x16 chunk at a time. Identical to 0.3.6. |
-| `MaterialClaim_Block-0.4.0.jar` | `MaterialClaim_Block` | Claim any block rectangle with a golden shovel, GriefPrevention style. |
+## MaterialClaim_Block
 
-Both plugins are complete and independent: same menu, same upkeep, same trust list, same
-paid protections. They both use the `/claims` command and both claim land, so on one server
-pick the one you want and leave the other out.
+- **Right click the air with the shovel inside your own land shows the claim border** for
+  30 seconds, with the name of the claim and the remaining time in chat. Clicking the air
+  also cancels a half-made selection, so nobody gets stuck mid-claim.
+- **Selection outlines now draw the border only**, never a fill, so a 200x150 claim no longer
+  spams particles over all 30,000 blocks. Cost depends on the perimeter, not the area.
+- **Brighter particles.** `END_ROD` by default (bright white, no gravity, visible from far
+  away) instead of the old pale villager particles, drawn at ground level and at eye height
+  so the line is readable across uneven terrain.
+- **Border time raised to 30 seconds**, and asking again restarts the timer instead of
+  stacking a second overlapping outline. `Min` 8 seconds is gone.
+- **Shovel hints.** The first time you hold a golden shovel you get one short line telling
+  you what it does: inside your land it points at the border, outside it explains the two
+  corners. There is always a hint when a click could not do anything.
 
-## MaterialClaim_Block: claim land in blocks
+All of it is configurable:
 
-- **Golden shovel.** Left click a block for the first corner, right click the opposite
-  corner for the second. A particle outline follows your cursor while you select.
-- **The price menu opens automatically** on the second corner. It shows the exact size in
-  blocks, the territory size after claiming, the upkeep rate, and the adjusted price for
-  those blocks. Nothing is charged until you confirm.
-- **Stick.** Right click any block to see who owns it, its size and its upkeep left.
-- **Full vertical column.** A claim covers bedrock to build limit at those coordinates.
-- **Merging.** Touching or overlapping land you already own joins one territory. Expanding
-  over your own land only charges for the new blocks.
-- **Shrinking.** Sneak + left click, then right click the opposite corner, to remove land.
-  Free, and nothing is refunded.
-- **Configurable pricing** in `config.yml`:
-  - `claim-price.mode: flat` (default) or `tiered`
-  - `claim-price.per-chunk-hours: 96` for 256 blocks, so the old economy is unchanged
-  - `claim-price.tiers` for per-block discounts by area when `mode: tiered`
-  - `upkeep-tiers` for how the hourly drain scales with size
-  - `minimum-blocks`, `maximum-blocks`, `max-claim-blocks`
-- Existing chunk claims in `claims.yml` are converted to 16x16 rectangles on first load,
-  keeping owner, trust, settings, purchases and the upkeep clock.
+```yaml
+borders:
+  show-seconds: 30
+  particle: END_ROD
+  density: 2
+```
 
-## Shared with 0.3.6 (both jars)
+## First join welcome
 
-- A paid protection costs exactly **24 hours** of territory upkeep, deducted from the clock.
-  Under 24 hours left it is refused with a clear message. As of 0.3.6 this applies to
-  everyone, including OPs, which is what made the deduction actually visible.
-- **Confirm before buying** states the 24 hour cost, the permanent upkeep rise and that
-  nothing is refunded.
-- Buying a protection raises upkeep cost by 25% **permanently** and stacking, so a diamond
-  worth 12h becomes 9.6h, 8h, 6.9h and finally 6h. The rise stays while a protection is
-  switched off.
-- Toggling a bought protection, and changing PvP mode after buying PvP, are free.
-- **No refunds, ever.**
+A player who has **never played on the server before** is greeted once and told the server
+has a land claim plugin, how the shovel works, and that `/claim` opens the menu. Returning
+players are never greeted, even if they own no land. Every line is a normal `messages:`
+entry, so you can reword it, or set `welcome-first-join: false` to turn it off.
 
-Needs Paper 1.21.1+ and Java 21+. Chest menu works on Java and Bedrock (Geyser).
+## MaterialClaim_Chunk
+
+Unchanged.
+
+Needs Paper 1.21.1+ and Java 21+.

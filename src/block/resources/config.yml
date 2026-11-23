@@ -48,6 +48,20 @@ upkeep-tiers:
   - up-to-blocks: 1000000
     multiplier: 1.0
 
+# Greet a player who has never played on this server before and explain the claim plugin.
+# The wording lives in messages.welcome* below, so it can be edited freely.
+welcome-first-join: true
+
+# Border and selection particles.
+borders:
+  # How long Show borders stays visible, in seconds.
+  show-seconds: 30
+  # Particle used for borders. END_ROD is bright white and visible from far away.
+  # Other good choices: FLAME, SOUL_FIRE_FLAME, ELECTRIC_SPARK, ENCHANTED_HIT.
+  particle: END_ROD
+  # Particles per block along a border edge. 1 = one per block, 2 = denser.
+  density: 2
+
 # Tool items. Left click sets the first corner, right click sets the second and opens the
 # price menu. The stick inspects land.
 tools:
@@ -139,6 +153,15 @@ messages:
   already-claimed: "<red>This chunk already belongs to {owner}."
   limit-reached: "<red>You reached your claim limit of {limit}."
   selection-first: "<gray>First corner set at <white>{x}, {z}</white>. <gray>Right click the opposite corner."
+  shovel-hint-own: "<gray>Right click the air with the shovel to show this claim's border. <gray>Left click a block to claim more land."
+  shovel-hint-wild: "<gray>Left click a block with the shovel for the first corner, then right click the opposite corner. <gray>Right click the air to cancel."
+  border-shown: "<green>Showing the border of <white>{name}<green> for <white>{seconds}</white> seconds."
+  border-none: "<gray>You are standing on <white>unclaimed land<gray>. Left click a block with the shovel to claim it."
+  welcome: "<gold><bold>Welcome to the server!</bold></gold>"
+  welcome-claim: "<gray>This server has a <white>land claim<gray> plugin. Claim land with a <white>golden shovel<gray>:"
+  welcome-claim-line: "<dark_gray> > <gray>Left click a block for the first corner, right click the opposite corner."
+  welcome-claim-line2: "<dark_gray> > <gray>The price menu opens automatically when you pick the second corner."
+  welcome-command: "<dark_gray> > <gray>Or use <white>/claim<gray> to open the menu, and right click the air with the shovel to see your border."
   selection-cancelled: "<gray>Selection cancelled."
   selection-other-world: "<red>Both corners must be in the same world."
   selection-too-small: "<red>That selection is too small. The minimum is <white>{min}</white> blocks <gray>(about {side}x{side}). <gray>Make the box bigger, or lower <white>claim-price.minimum-blocks</white> in config.yml."

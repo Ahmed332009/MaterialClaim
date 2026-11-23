@@ -6,7 +6,6 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
-import org.bukkit.Particle;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -824,58 +823,16 @@ public final class GuiManager implements Listener {
 
     // ----------------------------------------------------------------- borders
 
-    /** Shows the outline of the territory the player is standing in, or of this claim. */
+    /** Shows the outline of a territory for the configured time (default 30 seconds). */
     public void showBorders(Player p, Claim c) {
         if (c == null) {
             plugin.send(p, "no-claim-here");
             return;
         }
-        List<Area> areas = new ArrayList<>(c.areas);
-        new BukkitRunnable() {
-            int runs = 0;
-
-            @Override
-            public void run() {
-                if (!p.isOnline() || runs++ >= 16) {
-                    cancel();
-                    return;
-                }
-                double px = p.getLocation().getX();
-                double pz = p.getLocation().getZ();
-                for (Area a : areas) {
-                    if (!a.world().equals(p.getWorld().getUID())) {
-                        continue;
-                    }
-                    // Only outline rectangles near the player, to keep particles cheap.
-                    double dx = Math.max(0, Math.max(a.minX() - px, px - a.maxX()));
-                    double dz = Math.max(0, Math.max(a.minZ() - pz, pz - a.maxZ()));
-                    if (dx * dx + dz * dz > 96.0 * 96.0) {
-                        continue;
-                    }
-                    drawArea(p, a);
-                }
-            }
-        }.runTaskTimer(plugin, 0L, 10L);
-    }
-
-    private void drawArea(Player p, Area a) {
-        double py = p.getLocation().getY();
-        List<double[]> edges = new ArrayList<>();
-        edges.add(new double[]{a.minX(), a.minZ(), a.maxX(), a.minZ()});
-        edges.add(new double[]{a.minX(), a.maxZ(), a.maxX(), a.maxZ()});
-        edges.add(new double[]{a.minX(), a.minZ(), a.minX(), a.maxZ()});
-        edges.add(new double[]{a.maxX(), a.minZ(), a.maxX(), a.maxZ()});
-        for (double[] e : edges) {
-            int steps = Math.max(2, (int) Math.round(Math.max(
-                    Math.abs(e[2] - e[0]), Math.abs(e[3] - e[1]))));
-            for (int i = 0; i <= steps; i++) {
-                double x = e[0] + (e[2] - e[0]) * i / steps;
-                double z = e[1] + (e[3] - e[1]) * i / steps;
-                for (double dy = 0; dy <= 2; dy += 1) {
-                    p.spawnParticle(Particle.END_ROD, x, py + dy, z, 1, 0, 0, 0, 0);
-                }
-            }
-        }
+        plugin.borders().showClaim(p, c);
+        plugin.send(p, "border-shown",
+                "name", c.displayName(),
+                "seconds", String.valueOf(plugin.borders().showSeconds()));
     }
 
     // ------------------------------------------------------------------ clicks

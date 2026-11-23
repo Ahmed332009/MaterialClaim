@@ -3,7 +3,6 @@ package dev.keepclaims;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -11,9 +10,9 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerItemHeldEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.EquipmentSlot;
-import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -43,8 +42,8 @@ public final class SelectionListener implements Listener {
     private final Map<UUID, Location> corners = new ConcurrentHashMap<>();
     /** Players whose pending selection will REMOVE land instead of adding it. */
     private final Set<UUID> removing = ConcurrentHashMap.newKeySet();
-    /** Players whose particle preview task is running. */
-    private final Map<UUID, BukkitRunnable> previews = new ConcurrentHashMap<>();
+    /** Players already shown the shovel hint this session. */
+    private final Set<UUID> holdingHints = ConcurrentHashMap.newKeySet();
 
     public SelectionListener(KeepClaims plugin) {
         this.plugin = plugin;
@@ -62,9 +61,15 @@ public final class SelectionListener implements Listener {
     public void cancel(Player p) {
         corners.remove(p.getUniqueId());
         removing.remove(p.getUniqueId());
-        BukkitRunnable r = previews.remove(p.getUniqueId());
-        if (r != null) {
-            r.cancel();
+        plugin.borders().stopPreview(p);
+    }
+
+    @EventHandler
+    public void onHold(PlayerItemHeldEvent e) {
+        var inv = e.getPlayer().getInventory();
+        var item = inv.getItem(e.getNewSlot());
+        if (item != null && item.getType() == Material.GOLDEN_SHOVEL) {
+            hint(e.getPlayer());
         }
     }
 
@@ -111,11 +116,15 @@ public final class SelectionListener implements Listener {
             return;
         }
         if (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.RIGHT_CLICK_AIR) {
-            // Clicking at the sky cancels a pending selection, so a mis-aimed first corner
-            // is easy to get out of.
+            // Right clicking the air is the border command: inside your own land it shows
+            // the outline, and it also cancels a half-made selection so nobody gets stuck.
             if (hasCorner(p)) {
                 cancel(p);
                 plugin.send(p, "selection-cancelled");
+                return;
+            }
+            if (e.getAction() == Action.RIGHT_CLICK_AIR) {
+                showBorder(p);
             }
             return;
         }
@@ -199,95 +208,60 @@ public final class SelectionListener implements Listener {
         plugin.gui().openSelection(p, area);
     }
 
+    /**
+     * Right click with the shovel in the air. If the player stands in their own land, the
+     * border is shown for the configured time; otherwise it tells them how to claim.
+     */
+    private void showBorder(Player p) {
+        ClaimManager cm = plugin.claims();
+        Claim c = cm.at(p.getLocation());
+        if (c == null) {
+            plugin.send(p, "border-none");
+            plugin.send(p, "shovel-hint-wild");
+            return;
+        }
+        if (!c.isServer() && p.getUniqueId().equals(c.owner)) {
+            plugin.borders().showClaim(p, c);
+            plugin.send(p, "border-shown",
+                    "name", c.displayName(),
+                    "seconds", String.valueOf(plugin.borders().showSeconds()));
+            plugin.send(p, "shovel-hint-own");
+            return;
+        }
+        // Someone else's land, or server land: show it, but say whose it is.
+        plugin.borders().showClaim(p, c);
+        plugin.send(p, "border-shown",
+                "name", c.isServer() ? "the server" : c.ownerName + "'s claim",
+                "seconds", String.valueOf(plugin.borders().showSeconds()));
+    }
+
+    /**
+     * One-time hint the first time a player holds the shovel, so the tool explains itself.
+     * Shown at most once per session per player.
+     */
+    public void hint(Player p) {
+        if (!holdingHints.add(p.getUniqueId())) {
+            return;
+        }
+        Claim c = plugin.claims().at(p.getLocation());
+        boolean own = c != null && !c.isServer() && p.getUniqueId().equals(c.owner);
+        plugin.send(p, own ? "shovel-hint-own" : "shovel-hint-wild");
+    }
+
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         cancel(e.getPlayer());
+        holdingHints.remove(e.getPlayer().getUniqueId());
     }
 
     // ---------------------------------------------------------------- preview
 
     private void startPreview(Player p, Location corner) {
-        // Restart ONLY the particle task. This used to call cancel(p), which also cleared
-        // the corner that was just stored, so the first click was thrown away instantly and
-        // the second click started a new selection instead of finishing one. That made it
-        // impossible to complete a selection.
-        BukkitRunnable previous = previews.remove(p.getUniqueId());
-        if (previous != null) {
-            previous.cancel();
-        }
-        BukkitRunnable r = new BukkitRunnable() {
-            @Override
-            public void run() {
-                if (!p.isOnline() || !hasCorner(p)) {
-                    cancel();
-                    previews.remove(p.getUniqueId());
-                    return;
-                }
-                Location target = targetOf(p, corner);
-                if (target == null) {
-                    return;
-                }
-                drawOutline(p, Area.of(corner.getWorld().getUID(),
-                        corner.getBlockX(), corner.getBlockZ(),
-                        target.getBlockX(), target.getBlockZ()));
-            }
-        };
-        previews.put(p.getUniqueId(), r);
-        r.runTaskTimer(plugin, 1L, 10L);
-    }
-
-    /**
-     * The corner the preview grows towards: the block the player is looking at, so the
-     * rectangle follows the cursor until they click the second corner.
-     */
-    private Location targetOf(Player p, Location corner) {
-        var found = p.getTargetBlockExact(48);
-        if (found != null) {
-            return found.getLocation();
-        }
-        Location eye = p.getEyeLocation();
-        World w = eye.getWorld();
-        if (w == null) {
-            return null;
-        }
-        // No block in range: project 8 blocks forward on the ground plane.
-        double dx = eye.getDirection().getX();
-        double dz = eye.getDirection().getZ();
-        double len = Math.sqrt(dx * dx + dz * dz);
-        if (len < 1e-6) {
-            return null;
-        }
-        dx /= len;
-        dz /= len;
-        int x = (int) Math.floor(corner.getX() + dx * 8);
-        int z = (int) Math.floor(corner.getZ() + dz * 8);
-        int y = corner.getWorld().getHighestBlockYAt(x, z);
-        return new Location(corner.getWorld(), x, y, z);
-    }
-
-    /** Draws the rectangle edges with particles at ground level. */
-    public void drawOutline(Player p, Area a) {
-        World w = Bukkit.getWorld(a.world());
-        if (w == null) {
-            return;
-        }
-        int step = Math.max(1, Math.max(a.width(), a.depth()) / 32);
-        List<int[]> pts = new ArrayList<>();
-        for (int x = a.minX(); x <= a.maxX(); x += step) {
-            pts.add(new int[]{x, a.minZ()});
-            pts.add(new int[]{x, a.maxZ()});
-        }
-        for (int z = a.minZ(); z <= a.maxZ(); z += step) {
-            pts.add(new int[]{a.minX(), z});
-            pts.add(new int[]{a.maxX(), z});
-        }
-        for (int[] pt : pts) {
-            if (!w.isChunkLoaded(pt[0] >> 4, pt[1] >> 4)) {
-                continue;
-            }
-            double y = w.getHighestBlockYAt(pt[0], pt[1]) + 1.0;
-            p.spawnParticle(Particle.HAPPY_VILLAGER, pt[0] + 0.5, y, pt[1] + 0.5, 1, 0, 0, 0, 0);
-        }
+        // The renderer restarts only its own particle task; it must never touch the stored
+        // corner, which is what broke claiming in 0.4.0.
+        plugin.borders().startPreview(p, Area.of(corner.getWorld().getUID(),
+                corner.getBlockX(), corner.getBlockZ(),
+                corner.getBlockX(), corner.getBlockZ()));
     }
 
     /** Removes MiniMessage tags, for text that is re-inserted into a message. */
@@ -297,10 +271,7 @@ public final class SelectionListener implements Listener {
 
     /** Stops every preview task, for plugin disable. */
     public void shutdown() {
-        for (BukkitRunnable r : previews.values()) {
-            r.cancel();
-        }
-        previews.clear();
         corners.clear();
+        removing.clear();
     }
 }

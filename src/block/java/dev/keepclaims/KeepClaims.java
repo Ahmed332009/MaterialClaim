@@ -20,6 +20,7 @@ public final class KeepClaims extends JavaPlugin {
     private SettingsService settings;
     private ClaimPricing pricing;
     private SelectionListener selection;
+    private BorderRenderer borders;
     private final Set<UUID> bypassing = ConcurrentHashMap.newKeySet();
 
     @Override
@@ -30,6 +31,7 @@ public final class KeepClaims extends JavaPlugin {
         payments = new PaymentService(this);
         claims = new ClaimManager(this);
         gui = new GuiManager(this);
+        borders = new BorderRenderer(this);
         selection = new SelectionListener(this);
         payments.reload();
         claims.reloadSettings();
@@ -39,6 +41,7 @@ public final class KeepClaims extends JavaPlugin {
         getServer().getPluginManager().registerEvents(gui, this);
         getServer().getPluginManager().registerEvents(new ChatInputListener(this, gui), this);
         getServer().getPluginManager().registerEvents(selection, this);
+        getServer().getPluginManager().registerEvents(new JoinWelcome(this), this);
 
         ClaimCommand command = new ClaimCommand(this);
         PluginCommand pc = getCommand("claims");
@@ -55,6 +58,9 @@ public final class KeepClaims extends JavaPlugin {
     public void onDisable() {
         if (selection != null) {
             selection.shutdown();
+        }
+        if (borders != null) {
+            borders.shutdown();
         }
         if (claims != null) {
             claims.saveNow();
@@ -74,6 +80,10 @@ public final class KeepClaims extends JavaPlugin {
 
     public SelectionListener selection() {
         return selection;
+    }
+
+    public BorderRenderer borders() {
+        return borders;
     }
 
     public ClaimManager claims() {

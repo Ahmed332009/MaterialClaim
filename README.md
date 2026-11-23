@@ -40,6 +40,20 @@ Prices are set in `config.yml` under `claim-price` and are **configurable in two
 | `flat` (default) | Price is proportional to area. One 16x16 chunk (256 blocks) = 96 hours, so 1 block = 0.375h. Nothing changed economically from the old chunk system. |
 | `tiered` | The per-block price is multiplied by a factor from `claim-price.tiers` chosen by area, so big claims can be cheaper per block. |
 
+**Borders.** Right click the air with the shovel (standing in your own land) to outline
+the claim with particles for 30 seconds. Clicking the air also cancels a half-made
+selection. Right clicking the air on unclaimed land tells you how to claim.
+
+The outline is drawn on the **border only**, never a fill, so even a huge claim stays
+cheap to draw. Tune it in `config.yml`:
+
+```yaml
+borders:
+  show-seconds: 30      # how long the border stays visible
+  particle: END_ROD     # bright white, visible from far; FLAME also works well
+  density: 2            # particles per block along an edge
+```
+
 The **stick** right-clicked on a block tells you who owns it, its size and its upkeep.
 Sneak + right click with the shovel on your own land removes that rectangle.
 
@@ -90,6 +104,10 @@ Do not run this together with DiamondClaims for long: both use the `/claim` comm
 | `claim-price.maximum-blocks` | 0 | Largest selection (0 = no limit) |
 | `claim-price.tiers` | see config | Per-block multipliers for `tiered` mode |
 | `upkeep-tiers` | 1.0 | How the hourly upkeep drain scales with territory size, in blocks |
+| `borders.show-seconds` | 30 | How long Show borders stays visible |
+| `borders.particle` | END_ROD | Particle used for borders and selection outlines |
+| `borders.density` | 2 | Particles per block along a border edge |
+| `welcome-first-join` | true | Greet first-time players and explain the plugin |
 | `tools.claim-tool` | GOLDEN_SHOVEL | Item used to select corners |
 | `tools.inspect-tool` | STICK | Item used to inspect land |
 | `max-claim-blocks` | 0 | Hard cap on total blocks per player (0 = use `max-claims-default`) |
