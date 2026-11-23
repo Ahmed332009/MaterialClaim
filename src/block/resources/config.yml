@@ -220,6 +220,13 @@ messages:
   bypass-off: "<yellow>Claim bypass disabled."
   server-claimed: "<green>Claimed {count} block(s) for the server."
   admin-unclaimed: "<yellow>The whole connected territory was removed."
+  # --- staff commands (see /claims admin help) ---
+  admin-transferred: "<green>Transferred <white>{blocks}</white> blocks from <white>{from}</white> to <white>{to}</white>. Settings and the upkeep clock came with it; the trust list was cleared."
+  admin-limit-set: "<green>{player} may now claim up to <white>{blocks}</white> blocks in total."
+  admin-limit-cleared: "<green>{player} is back on the default claim limit."
+  admin-upkeep-set: "<green>Set <white>{count}</white> territor(y/ies) of {player} to <white>{time}</white> of upkeep."
+  admin-server-wiped: "<green>Removed <white>{count}</white> server claim(s), <white>{blocks}</white> blocks in total."
+  admin-server-wipe-blocked: "<red>Refusing to delete <white>{count}</white> server claims in one go (limit {max}). Remove them in smaller batches."
   flag-changed: "<green>{flag} is now {value}."
   flag-purchased: "<green>Bought {flag} for {hours} hours of upkeep. It is yours to toggle for free from now on, and nothing is refunded."
   flag-unchanged: "<yellow>{flag} is already {value}."

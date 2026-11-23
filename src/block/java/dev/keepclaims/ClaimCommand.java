@@ -23,12 +23,22 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         // Console may reload.
         if (!(sender instanceof Player p)) {
-            if (args.length >= 2 && args[0].equalsIgnoreCase("admin") && args[1].equalsIgnoreCase("reload")) {
-                plugin.reloadAll();
-                plugin.send(sender, "reloaded");
-            } else {
-                sender.sendMessage("MaterialClaim: use '/claims admin reload' from the console.");
+            if (args.length >= 2 && args[0].equalsIgnoreCase("admin")) {
+                // Most admin commands need a position; these two do not work from console.
+                String sub = args[1].toLowerCase(Locale.ROOT);
+                if (sub.equals("reload")) {
+                    plugin.reloadAll();
+                    plugin.send(sender, "reloaded");
+                    return true;
+                }
+                if (sub.equals("deleteserver") || sub.equals("list") || sub.equals("who")) {
+                    sender.sendMessage("MaterialClaim: '/claims admin " + sub
+                            + "' needs to be run in game.");
+                    return true;
+                }
             }
+            sender.sendMessage("MaterialClaim: from the console only '/claims admin reload'"
+                    + " is available.");
             return true;
         }
         if (!p.hasPermission("materialclaim.use")) {
@@ -103,7 +113,14 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
                     cm.untrust(p, here, target.getUniqueId(), name);
                 }
             }
-            case "admin" -> admin(p, args);
+            case "admin" -> {
+                // Tab-complete offers admin subcommands only to staff.
+                if (!p.hasPermission("materialclaim.admin")) {
+                    plugin.send(p, "no-permission");
+                    break;
+                }
+                admin(p, args);
+            }
             default -> gui.openMain(p);
         }
         return true;
@@ -257,39 +274,7 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
     }
 
     private void admin(Player p, String[] args) {
-        if (!p.hasPermission("materialclaim.admin")) {
-            plugin.send(p, "no-permission");
-            return;
-        }
-        ClaimManager cm = plugin.claims();
-        String sub = args.length > 1 ? args[1].toLowerCase(Locale.ROOT) : "";
-        switch (sub) {
-            case "bypass" -> {
-                if (plugin.bypassing().remove(p.getUniqueId())) {
-                    plugin.send(p, "bypass-off");
-                } else {
-                    plugin.bypassing().add(p.getUniqueId());
-                    plugin.send(p, "bypass-on");
-                }
-            }
-            case "serverclaim" -> {
-                int radius = 0;
-                if (args.length > 2) {
-                    try {
-                        radius = Math.max(0, Math.min(10, Integer.parseInt(args[2])));
-                    } catch (NumberFormatException ignored) {
-                        // keep 0
-                    }
-                }
-                cm.serverClaim(p, radius);
-            }
-            case "unclaim" -> cm.adminUnclaim(p);
-            case "reload" -> {
-                plugin.reloadAll();
-                plugin.send(p, "reloaded");
-            }
-            default -> plugin.sendMini(p, "<gray>/claims admin <bypass|serverclaim [radius]|unclaim|reload>");
-        }
+        plugin.adminCommands().run(p, args);
     }
 
     @Override
@@ -334,12 +319,9 @@ public final class ClaimCommand implements CommandExecutor, TabCompleter {
                     out.add(s);
                 }
             }
-        } else if (args.length == 2 && args[0].equalsIgnoreCase("admin") && sender.hasPermission("materialclaim.admin")) {
-            for (String s : List.of("bypass", "serverclaim", "unclaim", "reload")) {
-                if (s.startsWith(args[1].toLowerCase(Locale.ROOT))) {
-                    out.add(s);
-                }
-            }
+        } else if (args.length >= 2 && args[0].equalsIgnoreCase("admin")
+                && sender instanceof Player p && p.hasPermission("materialclaim.admin")) {
+            out.addAll(plugin.adminCommands().complete(p, args));
         }
         return out;
     }

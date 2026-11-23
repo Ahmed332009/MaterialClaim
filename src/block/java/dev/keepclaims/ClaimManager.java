@@ -54,10 +54,17 @@ public final class ClaimManager {
     private final Set<Claim> territories = ConcurrentHashMap.newKeySet();
     private final File file;
     private BukkitTask pendingSave;
+    /**
+     * Per-player block limits set by staff with /claims admin setlimit. Kept in their own
+     * file so they survive a reload and are easy to inspect. Never changed by gameplay.
+     */
+    private final Map<UUID, Long> limitOverrides = new ConcurrentHashMap<>();
+    private final File limitsFile;
 
     public ClaimManager(KeepClaims plugin) {
         this.plugin = plugin;
         this.file = new File(plugin.getDataFolder(), "claims.yml");
+        this.limitsFile = new File(plugin.getDataFolder(), "limits.yml");
     }
 
     public void reloadSettings() {
@@ -100,6 +107,10 @@ public final class ClaimManager {
 
     /** Maximum total blocks a player may own. */
     public long limitFor(Player p) {
+        Long override = limitOverrides.get(p.getUniqueId());
+        if (override != null) {
+            return override;
+        }
         // Kept as a block budget: the old config counted chunks, so it is scaled up.
         int chunks = plugin.getConfig().getInt("max-claims-default", 25);
         long limit = (long) chunks * ClaimPricing.BLOCKS_PER_CHUNK;
@@ -134,6 +145,64 @@ public final class ClaimManager {
         dst.pvpScope = c.pvpScope;
         dst.purchased.clear();
         dst.purchased.addAll(c.purchased);
+    }
+
+    /** Every territory, for staff listings. Read-only use. */
+    public Set<Claim> territories() {
+        return java.util.Collections.unmodifiableSet(territories);
+    }
+
+    /**
+     * Sets a staff block-limit override, or clears it when blocks is 0 or less.
+     * Also persists it so it applies again after a restart.
+     */
+    public void setLimitOverride(UUID player, long blocks) {
+        if (blocks <= 0) {
+            limitOverrides.remove(player);
+        } else {
+            limitOverrides.put(player, blocks);
+        }
+        saveLimits();
+    }
+
+    /** The staff override for a player, or -1 when they have none. */
+    public long limitOverride(UUID player) {
+        Long v = limitOverrides.get(player);
+        return v == null ? -1 : v;
+    }
+
+    /** Removes one territory completely: index, storage and any merged rectangles. */
+    public void deleteClaim(Claim c) {
+        if (c == null) {
+            return;
+        }
+        unindexClaim(c);
+        c.areas.clear();
+        markDirty();
+    }
+
+    /** Hands a territory to a new owner without touching its clock, trust or settings. */
+    public void transfer(Claim c, UUID newOwner, String newName) {
+        if (c == null || newOwner == null) {
+            return;
+        }
+        // A transfer must not let the new owner exceed their own limit by accident; staff
+        // are told about it rather than having the transfer refused, since it is their call.
+        c.owner = newOwner;
+        c.ownerName = newName;
+        // The new owner should not inherit the old owner's trusted players.
+        c.trusted.entries().clear();
+        markDirty();
+    }
+
+    /** Sets the upkeep clock left on a territory, counted from now. */
+    public void setUpkeep(Claim c, double hours) {
+        if (c == null || c.isServer()) {
+            return;
+        }
+        long ms = (long) (Math.max(0, hours) * HOUR_MS);
+        c.paidUntil = System.currentTimeMillis() + Math.min(ms, maxPrepaidMs());
+        markDirty();
     }
 
     public long ownedBlocks(UUID owner) {
@@ -190,9 +259,47 @@ public final class ClaimManager {
 
     // ---------------------------------------------------------------- storage
 
+    /** Writes the staff limit overrides to limits.yml. Small file, written immediately. */
+    private void saveLimits() {
+        YamlConfiguration y = new YamlConfiguration();
+        for (Map.Entry<UUID, Long> e : limitOverrides.entrySet()) {
+            y.set("limits." + e.getKey(), e.getValue());
+        }
+        try {
+            plugin.getDataFolder().mkdirs();
+            y.save(limitsFile);
+        } catch (IOException e) {
+            plugin.getLogger().severe("Could not save limits.yml: " + e.getMessage());
+        }
+    }
+
+    /** Reads the staff limit overrides, if the file exists. */
+    private void loadLimits() {
+        limitOverrides.clear();
+        if (!limitsFile.exists()) {
+            return;
+        }
+        YamlConfiguration y = YamlConfiguration.loadConfiguration(limitsFile);
+        org.bukkit.configuration.ConfigurationSection sec = y.getConfigurationSection("limits");
+        if (sec == null) {
+            return;
+        }
+        for (String key : sec.getKeys(false)) {
+            try {
+                long v = sec.getLong(key);
+                if (v > 0) {
+                    limitOverrides.put(UUID.fromString(key), v);
+                }
+            } catch (IllegalArgumentException ignored) {
+                plugin.getLogger().warning("Skipping unreadable limit entry: " + key);
+            }
+        }
+    }
+
     public void load() {
         index.clear();
         territories.clear();
+        loadLimits();
         if (!file.exists()) {
             return;
         }

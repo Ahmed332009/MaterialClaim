@@ -17,6 +17,7 @@ public final class KeepClaims extends JavaPlugin {
     private ClaimManager claims;
     private PaymentService payments;
     private GuiManager gui;
+    private AdminCommands adminCommands;
     private SettingsService settings;
     private ClaimPricing pricing;
     private SelectionListener selection;
@@ -31,6 +32,7 @@ public final class KeepClaims extends JavaPlugin {
         payments = new PaymentService(this);
         claims = new ClaimManager(this);
         gui = new GuiManager(this);
+        adminCommands = new AdminCommands(this);
         borders = new BorderRenderer(this);
         selection = new SelectionListener(this);
         payments.reload();
@@ -96,6 +98,10 @@ public final class KeepClaims extends JavaPlugin {
 
     public GuiManager gui() {
         return gui;
+    }
+
+    public AdminCommands adminCommands() {
+        return adminCommands;
     }
 
     public SettingsService settings() {
