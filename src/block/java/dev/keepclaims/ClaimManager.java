@@ -615,6 +615,12 @@ public final class ClaimManager {
         return plugin.pricing().upkeepRate(q.blocksAfter()) * factor;
     }
 
+    /** Two-decimal text for log lines. */
+    private static String trimHours(double hours) {
+        return hours == Math.rint(hours) ? String.valueOf((long) hours)
+                : String.format(java.util.Locale.ROOT, "%.2f", hours);
+    }
+
     /** Charges for a quoted selection and applies it. */
     public boolean purchase(Player p, Quote q) {
         if (!q.ok()) {
@@ -697,6 +703,13 @@ public final class ClaimManager {
         target.paidUntil = now + remaining;
         reindex(target);
         markDirty();
+        // Console line so a server owner can confirm what actually happened, including which
+        // rectangle, how many blocks and what was charged.
+        plugin.getLogger().info("Claim by " + p.getName()
+                + ": " + q.area().describe()
+                + " (" + q.newBlocks() + " new blocks, " + target.blocks() + " total)"
+                + " cost " + trimHours(q.hours()) + "h, "
+                + Util.duration(remaining) + " left");
         plugin.send(p, "claim-success", "time", Util.duration(remaining),
                 "size", String.valueOf(target.blocks()),
                 "dims", sizeLine(target));

@@ -299,7 +299,30 @@ public final class GuiManager implements Listener {
         fillEmpty(inv);
         p.openInventory(inv);
     }
+    /** Selection quotes awaiting a Confirm click, per player. */
     private static final Map<UUID, ClaimManager.Quote> QUOTES = new ConcurrentHashMap<>();
+
+    /**
+     * The last rectangle each player successfully claimed and when. A double click on
+     * Confirm, or a click that lands a tick later, must not be treated as a fresh claim.
+     */
+    private static final Map<UUID, RecentClaim> RECENT = new ConcurrentHashMap<>();
+
+    private record RecentClaim(Area area, long at) {
+    }
+
+    /** How long a repeat confirm for the same rectangle is swallowed. */
+    private static final long REPEAT_GUARD_MS = 10_000L;
+
+    private static boolean recentlyClaimed(Player p, Area area) {
+        RecentClaim r = RECENT.get(p.getUniqueId());
+        return r != null && r.area().equals(area)
+                && System.currentTimeMillis() - r.at() < REPEAT_GUARD_MS;
+    }
+
+    private static void rememberClaim(Player p, Area area) {
+        RECENT.put(p.getUniqueId(), new RecentClaim(area, System.currentTimeMillis()));
+    }
 
     // ---------------------------------------------------------------- main menu
 
@@ -889,9 +912,6 @@ public final class GuiManager implements Listener {
             }
             case "sel_confirm" -> {
                 ClaimManager.Quote q = QUOTES.remove(p.getUniqueId());
-                // The quote can be missing if the player reopened the land and confirmed a
-                // stale menu. Re-price from the rectangle the menu was built for instead of
-                // silently doing nothing.
                 if (q == null && h.selection != null) {
                     q = cm.quote(p, h.selection);
                 }
@@ -900,11 +920,23 @@ public final class GuiManager implements Listener {
                     plugin.send(p, "no-claim-here");
                     return;
                 }
+                // A double click sends a second confirm for the same rectangle. The first
+                // click already claimed it, so re-pricing here found nothing new and told
+                // the player they already owned the land they had just claimed. Any repeat
+                // confirm for a rectangle this player just claimed is ignored outright.
+                if (recentlyClaimed(p, q.area())) {
+                    Claim made = cm.ownedClaimAt(p.getUniqueId(), q.area());
+                    if (made != null) {
+                        later(() -> openClaim(p, made));
+                    }
+                    return;
+                }
                 if (!q.ok()) {
                     plugin.sendMini(p, q.error());
                     return;
                 }
                 if (cm.purchase(p, q)) {
+                    rememberClaim(p, q.area());
                     cm.saveNow();
                     Claim made = cm.ownedClaimAt(p.getUniqueId(), q.area());
                     if (made != null) {
