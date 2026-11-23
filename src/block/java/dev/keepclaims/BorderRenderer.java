@@ -78,6 +78,15 @@ public final class BorderRenderer {
         return Math.max(24, plugin.getConfig().getInt("borders.max-points", 240));
     }
 
+    /**
+     * How many blocks tall the border wall is. The claim itself still covers the whole
+     * vertical column; this only affects how tall the particles are drawn, so the border is
+     * easy to see from any angle instead of being a flat line on the ground.
+     */
+    private int wallHeight() {
+        return Math.max(1, Math.min(16, plugin.getConfig().getInt("borders.height", 3)));
+    }
+
     public int showSeconds() {
         return Math.max(1, plugin.getConfig().getInt("borders.show-seconds", 30));
     }
@@ -108,9 +117,10 @@ public final class BorderRenderer {
                     shown.remove(p.getUniqueId(), this);
                     return;
                 }
+                int height = wallHeight();
                 for (Area a : shapes) {
                     if (a.world().equals(p.getWorld().getUID())) {
-                        drawEdges(p, a);
+                        drawEdges(p, a, height);
                     }
                 }
             }
@@ -150,7 +160,7 @@ public final class BorderRenderer {
                     // The selection changed: draw it once and reset the idle counter.
                     last = target;
                     idle = 0;
-                    drawEdges(p, target);
+                    drawEdges(p, target, 1);
                     return;
                 }
                 idle++;
@@ -158,7 +168,7 @@ public final class BorderRenderer {
                 // piling up. The particle lifetime is about a second, so half a second is
                 // enough to look continuous.
                 if (idle % 2 == 0) {
-                    drawEdges(p, target);
+                    drawEdges(p, target, 1);
                 }
             }
         };
@@ -218,48 +228,60 @@ public final class BorderRenderer {
     }
 
     /**
-     * Draws the four edges of one rectangle.
+     * Draws the four edges of one rectangle as a wall of particles.
      *
-     * Only the perimeter gets particles, placed every `borders.spacing` blocks (default 3)
-     * at a single height above the ground. Drawing one layer instead of two and spacing the
-     * points out is what keeps the line clean while the player moves and the outline is
-     * redrawn: fewer new particles per redraw means far fewer overlapping generations.
+     * Only the perimeter is drawn, with one column of points every `borders.spacing` blocks
+     * (default 3). Each column is `borders.height` blocks tall (default 3), so the border
+     * reads as a wall you can see from any angle rather than a flat line on the ground.
+     *
+     * @param wallHeight how many blocks tall to stack each column
      */
-    public void drawEdges(Player p, Area a) {
+    public void drawEdges(Player p, Area a, int wallHeight) {
         World w = p.getWorld();
         if (w == null || !a.world().equals(w.getUID())) {
             return;
         }
         Particle particle = particle();
         int spacing = spacing();
-        int cap = maxPoints();
+        int height = Math.max(1, wallHeight);
+        // The cap counts columns, not individual particles, so a tall wall does not silently
+        // thin the outline out. Total particles drawn is at most cap * height.
+        int cap = Math.max(16, maxPoints() / height);
         double y = p.getLocation().getY() + 0.4;
-        int emitted = 0;
+        int columns = 0;
 
         // X edges (constant Z).
         for (int z : new int[]{a.minZ(), a.maxZ()}) {
-            for (int x = a.minX(); x <= a.maxX() && emitted < cap; x += spacing) {
+            for (int x = a.minX(); x <= a.maxX() && columns < cap; x += spacing) {
                 if (!w.isChunkLoaded(x >> 4, z >> 4)) {
                     continue;
                 }
-                emit(p, particle, x + 0.5, groundY(w, x, z, y), z + 0.5);
-                emitted++;
+                emitColumn(p, particle, x, z, w, y, height);
+                columns++;
             }
         }
         // Z edges (constant X).
         for (int x : new int[]{a.minX(), a.maxX()}) {
-            for (int z = a.minZ(); z <= a.maxZ() && emitted < cap; z += spacing) {
+            for (int z = a.minZ(); z <= a.maxZ() && columns < cap; z += spacing) {
                 if (!w.isChunkLoaded(x >> 4, z >> 4)) {
                     continue;
                 }
-                emit(p, particle, x + 0.5, groundY(w, x, z, y), z + 0.5);
-                emitted++;
+                emitColumn(p, particle, x, z, w, y, height);
+                columns++;
             }
         }
         // The far corner is easy to miss when the loop steps over it; always mark it.
-        if (emitted < cap) {
-            emit(p, particle, a.maxX() + 0.5,
-                    groundY(w, a.maxX(), a.maxZ(), y), a.maxZ() + 0.5);
+        if (columns < cap) {
+            emitColumn(p, particle, a.maxX(), a.maxZ(), w, y, height);
+        }
+    }
+
+    /** Stacks one column of particles `height` blocks tall, starting just above the ground. */
+    private void emitColumn(Player p, Particle particle, int x, int z, World w,
+                            double fallbackY, int height) {
+        double base = groundY(w, x, z, fallbackY);
+        for (int i = 0; i < height; i++) {
+            emit(p, particle, x + 0.5, base + i, z + 0.5);
         }
     }
 

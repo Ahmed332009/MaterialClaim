@@ -52,8 +52,13 @@ borders:
   show-seconds: 30      # how long the border stays visible
   particle: END_ROD     # bright white, visible from far; FLAME also works well
   spacing: 3            # blocks between particles along an edge
+  height: 3             # how many blocks tall the border wall is drawn
   max-points: 240       # hard cap on particles per redraw
 ```
+
+`height: 3` stacks each particle column three blocks tall, so the border reads as a wall
+you can see from any angle instead of a flat line on the ground. The claim still protects
+the whole vertical column; this only changes how the border is drawn.
 
 `spacing: 3` is the classic look: a clear line, and few enough points that moving while
 you select does not leave a cloud of old particles behind. Lower it for a denser line.
@@ -111,6 +116,7 @@ Do not run this together with DiamondClaims for long: both use the `/claim` comm
 | `borders.show-seconds` | 30 | How long Show borders stays visible |
 | `borders.particle` | END_ROD | Particle used for borders and selection outlines |
 | `borders.spacing` | 3 | Blocks between particles along a border edge |
+| `borders.height` | 3 | How many blocks tall the border wall is drawn |
 | `borders.max-points` | 240 | Hard cap on particles per redraw |
 | `welcome-first-join` | true | Greet first-time players and explain the plugin |
 | `tools.claim-tool` | GOLDEN_SHOVEL | Item used to select corners |

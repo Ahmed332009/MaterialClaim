@@ -63,6 +63,9 @@ borders:
   # so many points that moving while selecting leaves a cloud of old particles behind.
   # 1 = dense, 6 = sparse.
   spacing: 3
+  # How many blocks tall the border wall is drawn. The claim itself still covers the whole
+  # vertical column; this only makes the particles easier to see from any angle.
+  height: 3
   # Hard limit on particles per redraw, so very large claims stay smooth.
   max-points: 240
 

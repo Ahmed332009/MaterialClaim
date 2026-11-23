@@ -1,24 +1,30 @@
-**Selection particles thinned out and settled, so the outline stays a line instead of
-turning into a cloud while you walk. 0.4.2's border, timing and welcome all stay.**
+**The claim border is now a 3 block tall wall of particles instead of a flat line on the
+ground, so it is visible from any angle.**
 
 ## MaterialClaim_Block
 
-- **About 91% fewer particles per redraw.** The outline is now a single layer of points
-  every 3 blocks along the edge, the spacing the old border used, instead of two particles
-  per block stacked at ground and eye height. A 48x48 selection went from 776 points per
-  redraw to 65.
-- **The live outline settles instead of endlessly redrawing.** Every redraw used to leave a
-  fresh generation of particles behind, so moving while selecting piled generations on top
-  of each other until the line looked like fog. The outline now redraws the moment the
-  cursor moves to a new block, then only refreshes on a slow heartbeat so the line stays
-  visible without accumulating.
-- **Hard cap on particles per redraw** (`borders.max-points`, default 240) so a very large
-  claim cannot flood the screen.
-- `borders.spacing` replaces `borders.density`: 3 means a particle every 3 blocks. The old
-  `density` key is still read if you had set it, so existing configs keep working.
+- **Border height.** Each particle column is stacked `borders.height` blocks tall (default
+  **3**), so the outline reads as a wall you can walk up to and see from a distance, rather
+  than a line that disappears behind terrain or your own feet.
+- The horizontal spacing is unchanged: a column every 3 blocks along the edge, the look
+  that was requested.
+- `borders.max-points` still caps the work per redraw. The cap now counts columns, not
+  individual particles, so a tall wall does not silently thin the horizontal outline out.
+  The total stays at 240 particles or fewer per redraw.
+- The live **selection** outline stays flat (one block tall) on purpose: while you are
+  dragging a box it is easier to read the shape as a line, and it keeps that preview cheap.
 
-The 30 second Show borders timer, the bright END_ROD particles, right-click-for-border and
-the first-join welcome are unchanged.
+```yaml
+borders:
+  show-seconds: 30
+  particle: END_ROD
+  spacing: 3
+  height: 3
+  max-points: 240
+```
+
+The 30 second timer, right-click-in-air for the border, the settled preview and the
+first-join welcome are unchanged.
 
 ## MaterialClaim_Chunk
 
