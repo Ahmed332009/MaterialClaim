@@ -219,6 +219,11 @@ messages:
   bypass-on: "<yellow>Claim bypass enabled."
   bypass-off: "<yellow>Claim bypass disabled."
   server-claimed: "<green>Claimed {count} block(s) for the server."
+  # --- server claim selection tool ---
+  admin-server-select-start: "<aqua>You are holding the <white>Server Claim Tool</white><aqua>. Left click a block for the first corner, right click the opposite corner. Right click the air to cancel."
+  admin-server-select-cancelled: "<gray>Server claim selection cancelled and the tool was taken back."
+  admin-server-select-have-corner: "<gray>You already set the first corner. Right click the opposite corner, or right click the air to start over."
+  admin-server-select-none: "<red>There was no free land in that selection, so nothing was claimed."
   admin-unclaimed: "<yellow>The whole connected territory was removed."
   # --- staff commands (see /claims admin help) ---
   admin-transferred: "<green>Transferred <white>{blocks}</white> blocks from <white>{from}</white> to <white>{to}</white>. Settings and the upkeep clock came with it; the trust list was cleared."

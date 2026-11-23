@@ -83,7 +83,8 @@ public final class AdminCommands {
                 + "<white>/claims admin delete<gray> - remove the territory you stand in");
         plugin.sendMini(p, "<white>/claims admin deleteplayer <player><gray> - remove all of a player's land");
         plugin.sendMini(p, "<white>/claims admin transfer <player><gray> - give the territory you stand in away");
-        plugin.sendMini(p, "<white>/claims admin serverclaim [radius]<gray> - protect a square around you");
+        plugin.sendMini(p, "<white>/claims admin serverclaim<gray> - get the netherite shovel,"
+                + " then select the land to protect");
         plugin.sendMini(p, "<white>/claims admin deleteserver<gray> - remove every server claim");
         plugin.sendMini(p, "<white>/claims admin unclaim<gray> - remove the whole territory you stand in");
         plugin.sendMini(p, "<gray>Look up: "
@@ -313,18 +314,28 @@ public final class AdminCommands {
                 "to", name(target));
     }
 
-    /** Claims a square of server land centred on the player, in chunks (16 blocks each). */
+    /**
+     * Gives the staff member the netherite selection shovel and switches them into server
+     * claim mode. Selecting two corners then creates server land for exactly that rectangle,
+     * however big, and the shovel disappears.
+     *
+     * A radius argument is still accepted for the old square behaviour, so nothing that
+     * already works in a script or a habit breaks.
+     */
     private void serverClaim(Player p, String[] args) {
-        int radius = 0;
         if (args.length > 2) {
             try {
-                radius = Math.max(0, Math.min(10, Integer.parseInt(args[2])));
+                int radius = Math.max(0, Math.min(10, Integer.parseInt(args[2])));
+                cm().serverClaim(p, radius);
+                return;
             } catch (NumberFormatException e) {
-                plugin.sendMini(p, "<red>Radius must be a whole number from 0 to 10.");
+                plugin.sendMini(p, "<red>Usage: <white>/claims admin serverclaim"
+                        + " <gray>for the selection tool, or "
+                        + "<white>/claims admin serverclaim <0-10><gray> for a square.");
                 return;
             }
         }
-        cm().serverClaim(p, radius);
+        plugin.selection().beginServerSelection(p);
     }
 
     /** Removes the whole territory the admin is standing in. Kept as an alias of delete. */
@@ -481,6 +492,15 @@ public final class AdminCommands {
             for (Player o : Bukkit.getOnlinePlayers()) {
                 if (o.getName().toLowerCase(Locale.ROOT).startsWith(a)) {
                     out.add(o.getName());
+                }
+            }
+            return out;
+        }
+        if (args.length == 3 && sub.equals("serverclaim")) {
+            String a = args[2].toLowerCase(Locale.ROOT);
+            for (String s : List.of("0", "1", "2", "3", "5", "10")) {
+                if (s.startsWith(a)) {
+                    out.add(s);
                 }
             }
             return out;

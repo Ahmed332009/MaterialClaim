@@ -1104,6 +1104,83 @@ public final class ClaimManager {
 
     // ------------------------------------------------------------------- admin
 
+    /**
+     * Creates server land from an exact rectangle, used by the admin selection shovel.
+     * Land that already belongs to anyone else is skipped rather than taken, and land that
+     * is already server land is merged into the same territory instead of duplicated.
+     */
+    public void serverClaimArea(Player p, Area area) {
+        if (area == null || area.blocks() <= 0) {
+            plugin.send(p, "no-claim-here");
+            return;
+        }
+        Claim existingServer = null;
+        List<Claim> carve = new ArrayList<>();
+        for (Claim c : overlapping(area)) {
+            if (c.isServer() && existingServer == null) {
+                existingServer = c;
+            } else {
+                carve.add(c);
+            }
+        }
+        // Carve away land that is not this server territory, rectangle by rectangle, so an
+        // L-shaped player claim only removes the part it actually owns.
+        List<Area> pieces = new ArrayList<>();
+        pieces.add(area);
+        for (Claim c : carve) {
+            for (Area owned : c.areas) {
+                List<Area> next = new ArrayList<>();
+                for (Area piece : pieces) {
+                    next.addAll(Area.subtract(piece, owned));
+                }
+                pieces = next;
+            }
+        }
+        long added = 0;
+        for (Area piece : pieces) {
+            if (piece.blocks() > 0) {
+                added += piece.blocks();
+            }
+        }
+        if (added == 0) {
+            plugin.send(p, "admin-server-select-none");
+            return;
+        }
+        if (existingServer == null) {
+            Claim c = new Claim(null, "Server", System.currentTimeMillis(), Long.MAX_VALUE);
+            c.settings.applyServerDefaults();
+            for (Area piece : pieces) {
+                if (piece.blocks() > 0) {
+                    c.addArea(piece);
+                }
+            }
+            indexClaim(c);
+        } else {
+            // Merge into the server land already there, and fold in any other server
+            // territory the rectangle touched so one area stays one territory.
+            Claim target = existingServer;
+            List<Area> absorb = new ArrayList<>();
+            for (Claim c : carve) {
+                if (c.isServer()) {
+                    absorb.addAll(c.areas);
+                    unindexClaim(c);
+                    c.areas.clear();
+                }
+            }
+            for (Area piece : pieces) {
+                if (piece.blocks() > 0) {
+                    target.addArea(piece);
+                }
+            }
+            for (Area a : absorb) {
+                target.addArea(a);
+            }
+            reindex(target);
+        }
+        markDirty();
+        plugin.send(p, "server-claimed", "count", String.valueOf(added));
+    }
+
     /** Claims a square of server land centred on the player, in chunks (16 blocks each). */
     public void serverClaim(Player p, int radius) {
         Location l = p.getLocation();
