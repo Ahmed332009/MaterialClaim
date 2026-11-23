@@ -8,6 +8,19 @@ enabled-worlds: []
 max-claims-default: 25
 
 # ---------------------------------------------------------------------------
+# UPKEEP CLOCK
+# These four settings decide how long a claim survives and how often it is checked.
+# ---------------------------------------------------------------------------
+# Nobody can bank more than this many days of upkeep on one territory.
+max-prepaid-days: 14
+# After upkeep reaches zero the territory keeps protecting for this long, then it is
+# deleted. Players get a warning on join when a claim has less than warn-days left.
+grace-days: 7
+warn-days: 3
+# How often (in minutes) the plugin checks for expired claims.
+check-interval-minutes: 5
+
+# ---------------------------------------------------------------------------
 # CLAIM PRICING
 # Land is claimed in BLOCKS with a golden shovel. One old chunk (16x16) is 256 blocks,
 # and the default price below keeps the old economy exactly: a 256 block claim costs 96

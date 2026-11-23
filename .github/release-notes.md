@@ -1,30 +1,20 @@
-**The claim border is now a 3 block tall wall of particles instead of a flat line on the
-ground, so it is visible from any angle.**
+**Adds the upkeep clock settings to `config.yml`, which were read by the code but missing
+from the file, and a prompt for writing the player guidebook.**
 
 ## MaterialClaim_Block
 
-- **Border height.** Each particle column is stacked `borders.height` blocks tall (default
-  **3**), so the outline reads as a wall you can walk up to and see from a distance, rather
-  than a line that disappears behind terrain or your own feet.
-- The horizontal spacing is unchanged: a column every 3 blocks along the edge, the look
-  that was requested.
-- `borders.max-points` still caps the work per redraw. The cap now counts columns, not
-  individual particles, so a tall wall does not silently thin the horizontal outline out.
-  The total stays at 240 particles or fewer per redraw.
-- The live **selection** outline stays flat (one block tall) on purpose: while you are
-  dragging a box it is easier to read the shape as a line, and it keeps that preview cheap.
+- `config.yml` now contains `max-prepaid-days` (14), `grace-days` (7), `warn-days` (3) and
+  `check-interval-minutes` (5). The plugin has always used these values, so **behaviour is
+  unchanged**; they were simply absent from the file, so they could not be tuned. They are
+  now documented in place.
 
-```yaml
-borders:
-  show-seconds: 30
-  particle: END_ROD
-  spacing: 3
-  height: 3
-  max-points: 240
-```
+No gameplay changes. The golden shovel, borders, particles, protections and welcome are
+untouched.
 
-The 30 second timer, right-click-in-air for the border, the settled preview and the
-first-join welcome are unchanged.
+## Repository
+
+- `GUIDEBOOK-PROMPT.md`: a complete, verified brief for writing a player-facing guidebook.
+  Every command, price, material value and timer in it was checked against the shipped code.
 
 ## MaterialClaim_Chunk
 
