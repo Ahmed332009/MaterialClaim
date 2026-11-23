@@ -1,45 +1,50 @@
-**Fixes three bugs: the claim message saying "chunks" instead of blocks, the claim border
-never disappearing after 30 seconds, and protection dyes being the wrong way round.**
+**Adds a full staff command set for managing land you do not own** - delete it, transfer it,
+wipe a player's land, override claim limits, and set upkeep clocks. Modelled on the admin
+commands in GriefPrevention and Lands so the same jobs are findable.
 
-## 1. "256 chunk(s)" after claiming one plot
+## `/claims admin help`
 
-The claim message, unclaim message, expiry warning and admin messages still used the old
-chunk wording from the chunk-based plugin. A 16x16 claim is **256 blocks**, which is one old
-chunk, so the message read `256 chunk(s)` and looked like the price and the size disagreed.
+Tab-complete lists all of these, and running `/claims admin` with no arguments prints the
+list. Everything needs `materialclaim.admin` (ops have it).
 
-Now it says **blocks**, everywhere:
+## Managing land
 
-```
-Land claimed. Your territory is now 256 blocks with 4d of upkeep.
-```
+| Command | What it does |
+| --- | --- |
+| `/claims admin delete` | Removes the **whole** territory you stand in, every rectangle of it, whoever owns it |
+| `/claims admin deleteplayer <player>` | Removes **all** land owned by a player |
+| `/claims admin deleteserver` | Removes every server claim |
+| `/claims admin transfer <player>` | Gives the territory you stand in to another player |
+| `/claims admin serverclaim [radius]` | Protects a square around you (radius 0-10 chunks) |
+| `/claims admin unclaim` | Removes the whole territory you stand in (same as delete) |
 
-## 2. The border never went away
+From GriefPrevention these are `/deleteclaim`, `/deleteallclaims`, `/deletealladminclaims`
+and `/transferclaim`.
 
-`borders.show-seconds: 30` was being compared against a **count of task runs**, not ticks.
-The task repeats every 10 ticks (half a second), so 30 "seconds" was really 30 x 10 ticks =
-300 ticks = **5 minutes**. The outline looked like it was permanent.
+- **Transfer** keeps the territory's settings and its upkeep clock, but **clears the trust
+  list**, so the previous owner's friends lose access. That is stated in the confirmation.
+- **`deleteserver` refuses to delete more than 500 server claims in one command**, so a
+  mistyped command cannot wipe a whole spawn network. Delete in batches.
+- Nothing is ever refunded by any of these.
 
-It now uses a real clock deadline, so `show-seconds: 30` means exactly 30 seconds, and any
-value you set is honoured.
+## Limits and time
 
-## 2b. The shovel's cursor outline
+| Command | What it does |
+| --- | --- |
+| `/claims admin setlimit <player> <blocks>` | Sets that player's total land limit. **0 clears it** back to the default |
+| `/claims admin setupkeep <player> <hours>` | Sets the upkeep clock on all their territories, clamped to the max-prepaid cap |
+| `/claims admin setupkeep <player> status` | Shows the clock and status of each of their territories |
 
-The live outline shown while picking the second corner was **never stopped when you swapped
-away from the shovel**. It kept running and redrawing wherever you looked, with any item in
-hand, until you cancelled the selection or logged out.
+`setlimit` is the equivalent of GriefPrevention's `/adjustbonusclaimblocks`. Overrides are
+stored in `limits.yml` and survive restarts.
 
-It now also stops when you switch to another item, change world, or die.
+## Look things up
 
-## 3. Protection colours were inverted
-
-The paid protection buttons showed **red dye while the protection was ON** and green while
-it was off, and the item name was coloured to match the wrong state.
-
-- **Green dye** = the protection is **on** and protecting.
-- **Red dye** = it is **off**. An unbought protection is red too, since it is not protecting
-  either; its description still says it can be bought for 24 hours.
-
-The six free toggles follow the same rule: green when visitors are allowed, red when blocked.
+| Command | What it does |
+| --- | --- |
+| `/claims admin list <player>` | Every territory a player owns, with sizes and upkeep |
+| `/claims admin who` | Every claim in the world you are standing in |
+| `/claims admin info [player]` | Detailed readout: owner and UUID, rectangles, world, upkeep rate, protections, trusted count |
 
 ## MaterialClaim_Chunk
 
