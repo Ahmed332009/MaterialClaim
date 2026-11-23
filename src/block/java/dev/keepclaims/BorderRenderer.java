@@ -108,11 +108,13 @@ public final class BorderRenderer {
             previous.cancel();
         }
         BukkitRunnable task = new BukkitRunnable() {
-            int ticks = 0;
+            // Wall-clock deadline, not a count of runs. The task repeats every 10 ticks, so
+            // counting runs made a 30 second border last 30 runs = 300 ticks = 5 minutes.
+            private final long endAt = System.currentTimeMillis() + seconds * 1000L;
 
             @Override
             public void run() {
-                if (!p.isOnline() || ticks++ >= seconds * 20) {
+                if (!p.isOnline() || System.currentTimeMillis() >= endAt) {
                     cancel();
                     shown.remove(p.getUniqueId(), this);
                     return;

@@ -1,10 +1,12 @@
 # MaterialClaim configuration
-# Item values below are hours of upkeep for ONE chunk. A diamond is worth 12 hours.
+# Item values below are hours of upkeep for ONE chunk-sized area (256 blocks). A diamond
+# is worth 12 hours.
 
 # Worlds where claiming is allowed. Empty list = every world.
 enabled-worlds: []
 
-# Default maximum chunks per player (all territories together). Give more with the permission materialclaim.limit.<number>
+# Default maximum land per player, in chunk-sized areas of 256 blocks (all territories
+# together). 25 means 25 x 256 = 6400 blocks. Give more with materialclaim.limit.<number>
 max-claims-default: 25
 
 # ---------------------------------------------------------------------------
@@ -91,7 +93,7 @@ tools:
   require-item: true
 
 # Nobody may own more than this many blocks in total, across all territories.
-# 0 = use max-claims-default (in chunks) instead.
+# 0 = use max-claims-default instead (each unit is 256 blocks).
 max-claim-blocks: 0
 
 # Accepted items and the hours of upkeep each is worth for ONE chunk.
@@ -194,8 +196,8 @@ messages:
   stick-unclaimed: "<gray>This land is <white>unclaimed<gray>."
   stick-server: "<gray>This land is protected by the <aqua>server<gray>."
   tools-given: "<green>Gave you a {tool}."
-  claim-success: "<green>Chunk claimed. Your territory is now <white>{size}</white> chunk(s) with <white>{time}</white> of upkeep."
-  unclaim-success: "<yellow>Chunk unclaimed. Upkeep is not refunded."
+  claim-success: "<green>Land claimed. Your territory is now <white>{size}</white> blocks with <white>{time}</white> of upkeep."
+  unclaim-success: "<yellow>Land unclaimed. Upkeep is not refunded."
   no-claim-here: "<red>There is no claim here."
   not-your-claim: "<red>That is not your claim."
   pay-success: "<green>Upkeep paid. This claim now has <white>{time}</white> left."
@@ -210,13 +212,13 @@ messages:
   trust-self: "<red>You cannot trust yourself."
   already-trusted: "<yellow>{name} is already trusted here."
   unknown-player: "<red>Player not found."
-  claim-expired: "<red>Your territory of {size} chunk(s) near chunk {x}, {z} ran out of upkeep and was removed."
-  unclaim-split: "<red>Unclaiming this chunk would split your territory in two. Unclaim from the edges instead."
+  claim-expired: "<red>Your territory of {size} blocks near block {x}, {z} ran out of upkeep and was removed."
+  unclaim-split: "<red>Unclaiming that part would split this territory in two. Unclaim from the edges instead."
   expiring-warning: "<yellow>{count} of your territories are running low on upkeep. Open /claims to pay."
   reloaded: "<green>MaterialClaim reloaded."
   bypass-on: "<yellow>Claim bypass enabled."
   bypass-off: "<yellow>Claim bypass disabled."
-  server-claimed: "<green>Claimed {count} chunk(s) for the server."
+  server-claimed: "<green>Claimed {count} block(s) for the server."
   admin-unclaimed: "<yellow>The whole connected territory was removed."
   flag-changed: "<green>{flag} is now {value}."
   flag-purchased: "<green>Bought {flag} for {hours} hours of upkeep. It is yours to toggle for free from now on, and nothing is refunded."

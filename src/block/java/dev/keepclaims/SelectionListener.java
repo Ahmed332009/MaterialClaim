@@ -70,7 +70,12 @@ public final class SelectionListener implements Listener {
         var item = inv.getItem(e.getNewSlot());
         if (item != null && item.getType() == Material.GOLDEN_SHOVEL) {
             hint(e.getPlayer());
+            return;
         }
+        // Switching away from the shovel stops the cursor outline. Without this the preview
+        // task kept running and redrawing the rectangle wherever the player was looking,
+        // even while they held something else entirely.
+        plugin.borders().stopPreview(e.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = false)
@@ -252,6 +257,18 @@ public final class SelectionListener implements Listener {
     public void onQuit(PlayerQuitEvent e) {
         cancel(e.getPlayer());
         holdingHints.remove(e.getPlayer().getUniqueId());
+    }
+
+    /** Leaving the world would otherwise leave the outline drawing in the old world. */
+    @EventHandler
+    public void onWorldChange(org.bukkit.event.player.PlayerChangedWorldEvent e) {
+        cancel(e.getPlayer());
+    }
+
+    /** Dying with a half-made selection leaves a stale outline behind. */
+    @EventHandler
+    public void onDeath(org.bukkit.event.entity.PlayerDeathEvent e) {
+        cancel(e.getPlayer());
     }
 
     // ---------------------------------------------------------------- preview

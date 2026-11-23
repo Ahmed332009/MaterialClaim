@@ -1,28 +1,45 @@
-**Fixes a successful claim reporting "you already own this land", and stops a double click on
-Confirm from claiming twice.**
+**Fixes three bugs: the claim message saying "chunks" instead of blocks, the claim border
+never disappearing after 30 seconds, and protection dyes being the wrong way round.**
 
-## The bug
+## 1. "256 chunk(s)" after claiming one plot
 
-Clicking **Confirm** twice (a normal double click) sent two confirms for the same rectangle.
-The first click claimed the land correctly. The second click was re-priced, found nothing new
-to claim, and reported **"You already own this chunk"** even though the claim had just
-succeeded. On a brand new account that reads as "claiming does not work", while the land was
-in fact claimed.
+The claim message, unclaim message, expiry warning and admin messages still used the old
+chunk wording from the chunk-based plugin. A 16x16 claim is **256 blocks**, which is one old
+chunk, so the message read `256 chunk(s)` and looked like the price and the size disagreed.
 
-- A repeat confirm for a rectangle the same player **just** claimed is now ignored outright,
-  for 10 seconds, so a double click or a click that lands a tick later changes nothing.
-- The guard is per rectangle, not per player, so claiming a different plot immediately
-  afterwards works normally.
-- If the duplicate click arrives, the claim menu is reopened instead of printing a warning,
-  so the player sees the claim they just made.
+Now it says **blocks**, everywhere:
 
-## Also in this release
+```
+Land claimed. Your territory is now 256 blocks with 4d of upkeep.
+```
 
-- **Console log for every claim**, so it can be verified from the server log:
-  `Claim by Steve: 0,0 to 15,15 (256 new blocks, 256 total) cost 96h, 4d left`.
-- The `already-yours` message no longer says "chunk" and no longer implies a failure:
-  *"You already own all of that land, so there is nothing to pay."* `already-claimed` likewise
-  says "land" rather than "chunk".
+## 2. The border never went away
+
+`borders.show-seconds: 30` was being compared against a **count of task runs**, not ticks.
+The task repeats every 10 ticks (half a second), so 30 "seconds" was really 30 x 10 ticks =
+300 ticks = **5 minutes**. The outline looked like it was permanent.
+
+It now uses a real clock deadline, so `show-seconds: 30` means exactly 30 seconds, and any
+value you set is honoured.
+
+## 2b. The shovel's cursor outline
+
+The live outline shown while picking the second corner was **never stopped when you swapped
+away from the shovel**. It kept running and redrawing wherever you looked, with any item in
+hand, until you cancelled the selection or logged out.
+
+It now also stops when you switch to another item, change world, or die.
+
+## 3. Protection colours were inverted
+
+The paid protection buttons showed **red dye while the protection was ON** and green while
+it was off, and the item name was coloured to match the wrong state.
+
+- **Green dye** = the protection is **on** and protecting.
+- **Red dye** = it is **off**. An unbought protection is red too, since it is not protecting
+  either; its description still says it can be bought for 24 hours.
+
+The six free toggles follow the same rule: green when visitors are allowed, red when blocked.
 
 ## MaterialClaim_Chunk
 

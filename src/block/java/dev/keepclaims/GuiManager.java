@@ -728,7 +728,10 @@ public final class GuiManager implements Listener {
         boolean owned = c.settings.isPurchased(f.id);
         boolean on = c.settings.isEnabled(f.id);
         boolean locked = svc.isLocked(f) && !p.hasPermission("materialclaim.admin");
-        Material icon = locked ? Material.BARRIER : on ? Material.RED_DYE : Material.LIME_DYE;
+        // Green = protection is ON, red = it is not protecting. An unbought protection shows
+        // red as well, because it is not protecting either; the lore says it can be bought.
+        Material icon = locked ? Material.BARRIER
+                : on ? Material.LIME_DYE : Material.RED_DYE;
         List<String> lore = new ArrayList<>();
         lore.add("<gray>" + f.description);
         lore.add("");
@@ -756,14 +759,15 @@ public final class GuiManager implements Listener {
         if (locked) {
             lore.add("<red>Locked by the server admin.");
         }
-        return item(icon, (on ? "<green>" : "<white>") + f.title, lore);
+        return item(icon, (on ? "<green>" : "<red>") + f.title, lore);
     }
 
     private ItemStack freeItem(Player p, Claim c, SettingsService.Flag f) {
         SettingsService svc = plugin.settings();
         boolean on = svc.get(c, f);
         boolean locked = svc.isLocked(f) && !p.hasPermission("materialclaim.admin");
-        Material icon = locked ? Material.BARRIER : on ? Material.LIME_DYE : Material.GRAY_DYE;
+        Material icon = locked ? Material.BARRIER
+                : on ? Material.LIME_DYE : Material.RED_DYE;
         List<String> lore = new ArrayList<>();
         lore.add("<gray>" + f.description);
         lore.add("<gray>Status: <white>" + (on ? "Allowed" : "Blocked"));
@@ -771,7 +775,7 @@ public final class GuiManager implements Listener {
         if (locked) {
             lore.add("<red>Locked by the server admin.");
         }
-        return item(icon, "<white>" + f.title, lore);
+        return item(icon, (on ? "<green>" : "<red>") + f.title, lore);
     }
 
     /** The PvP button: choose who may fight. Everyone means no protection. */
@@ -806,8 +810,9 @@ public final class GuiManager implements Listener {
         if (locked) {
             lore.add("<red>Locked by the server admin.");
         }
-        return item(locked ? Material.BARRIER : on ? Material.RED_DYE : Material.LIME_DYE,
-                (on ? "<green>" : "<white>") + f.title, lore);
+        return item(locked ? Material.BARRIER
+                        : on ? Material.LIME_DYE : Material.RED_DYE,
+                (on ? "<green>" : "<red>") + f.title, lore);
     }
 
     /** PvP scope sub-menu, only meaningful while PvP protection is active. */
