@@ -110,6 +110,15 @@ public final class SelectionListener implements Listener {
         if (!p.hasPermission("materialclaim.use")) {
             return;
         }
+        if (e.getAction() == Action.LEFT_CLICK_AIR || e.getAction() == Action.RIGHT_CLICK_AIR) {
+            // Clicking at the sky cancels a pending selection, so a mis-aimed first corner
+            // is easy to get out of.
+            if (hasCorner(p)) {
+                cancel(p);
+                plugin.send(p, "selection-cancelled");
+            }
+            return;
+        }
         if (e.getAction() == Action.LEFT_CLICK_BLOCK && e.getClickedBlock() != null) {
             e.setCancelled(true);
             Location l = e.getClickedBlock().getLocation();
@@ -147,15 +156,15 @@ public final class SelectionListener implements Listener {
         e.setCancelled(true);
         Location second = e.getClickedBlock().getLocation();
 
-        Location first = corners.get(p.getUniqueId());
-        if (first == null && p.isSneaking()) {
+        Location pendingFirst = corners.get(p.getUniqueId());
+        if (pendingFirst == null && p.isSneaking()) {
             Claim own = cm.at(second);
             if (own != null && !own.isServer() && p.getUniqueId().equals(own.owner)) {
                 plugin.gui().openUnclaim(p, own);
                 return;
             }
         }
-        if (first == null) {
+        if (pendingFirst == null) {
             // Right click with nothing selected starts a selection too, like GP.
             corners.put(p.getUniqueId(), second);
             startPreview(p, second);
@@ -164,12 +173,15 @@ public final class SelectionListener implements Listener {
                     "z", String.valueOf(second.getBlockZ()));
             return;
         }
-        if (first.getWorld() == null || !first.getWorld().equals(second.getWorld())) {
+        if (pendingFirst.getWorld() == null || !pendingFirst.getWorld().equals(second.getWorld())) {
             cancel(p);
             plugin.send(p, "selection-other-world");
             return;
         }
         boolean removeMode = removing.contains(p.getUniqueId());
+        // Capture BOTH corners BEFORE cancel() clears the stored state. Reading the corner
+        // after cancel() is what threw the first corner away.
+        Location first = pendingFirst;
         cancel(p);
         Area area = Area.of(second.getWorld().getUID(),
                 first.getBlockX(), first.getBlockZ(),
@@ -195,7 +207,14 @@ public final class SelectionListener implements Listener {
     // ---------------------------------------------------------------- preview
 
     private void startPreview(Player p, Location corner) {
-        cancel(p);
+        // Restart ONLY the particle task. This used to call cancel(p), which also cleared
+        // the corner that was just stored, so the first click was thrown away instantly and
+        // the second click started a new selection instead of finishing one. That made it
+        // impossible to complete a selection.
+        BukkitRunnable previous = previews.remove(p.getUniqueId());
+        if (previous != null) {
+            previous.cancel();
+        }
         BukkitRunnable r = new BukkitRunnable() {
             @Override
             public void run() {

@@ -932,8 +932,19 @@ public final class GuiManager implements Listener {
             }
             case "sel_confirm" -> {
                 ClaimManager.Quote q = QUOTES.remove(p.getUniqueId());
+                // The quote can be missing if the player reopened the land and confirmed a
+                // stale menu. Re-price from the rectangle the menu was built for instead of
+                // silently doing nothing.
+                if (q == null && h.selection != null) {
+                    q = cm.quote(p, h.selection);
+                }
                 p.closeInventory();
                 if (q == null) {
+                    plugin.send(p, "no-claim-here");
+                    return;
+                }
+                if (!q.ok()) {
+                    plugin.sendMini(p, q.error());
                     return;
                 }
                 if (cm.purchase(p, q)) {

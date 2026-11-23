@@ -555,7 +555,9 @@ public final class ClaimManager {
         if (total < plugin.pricing().minimumBlocks()) {
             return new Quote(probe, total, 0, null, List.of(), total, 0,
                     plugin.message("selection-too-small",
-                            "min", String.valueOf(plugin.pricing().minimumBlocks())));
+                            "min", String.valueOf(plugin.pricing().minimumBlocks()),
+                            "side", String.valueOf(
+                                    Math.max(1, (int) Math.round(Math.sqrt(plugin.pricing().minimumBlocks()))))));
         }
         int cap = plugin.pricing().maxBlocks();
         if (cap > 0 && total > cap) {
