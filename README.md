@@ -51,8 +51,12 @@ cheap to draw. Tune it in `config.yml`:
 borders:
   show-seconds: 30      # how long the border stays visible
   particle: END_ROD     # bright white, visible from far; FLAME also works well
-  density: 2            # particles per block along an edge
+  spacing: 3            # blocks between particles along an edge
+  max-points: 240       # hard cap on particles per redraw
 ```
+
+`spacing: 3` is the classic look: a clear line, and few enough points that moving while
+you select does not leave a cloud of old particles behind. Lower it for a denser line.
 
 The **stick** right-clicked on a block tells you who owns it, its size and its upkeep.
 Sneak + right click with the shovel on your own land removes that rectangle.
@@ -106,7 +110,8 @@ Do not run this together with DiamondClaims for long: both use the `/claim` comm
 | `upkeep-tiers` | 1.0 | How the hourly upkeep drain scales with territory size, in blocks |
 | `borders.show-seconds` | 30 | How long Show borders stays visible |
 | `borders.particle` | END_ROD | Particle used for borders and selection outlines |
-| `borders.density` | 2 | Particles per block along a border edge |
+| `borders.spacing` | 3 | Blocks between particles along a border edge |
+| `borders.max-points` | 240 | Hard cap on particles per redraw |
 | `welcome-first-join` | true | Greet first-time players and explain the plugin |
 | `tools.claim-tool` | GOLDEN_SHOVEL | Item used to select corners |
 | `tools.inspect-tool` | STICK | Item used to inspect land |

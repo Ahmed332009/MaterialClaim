@@ -1,37 +1,24 @@
-**Border on right click, brighter particles, a shorter selection outline, and a first-join
-welcome.** Everything from 0.4.1 keeps working.
+**Selection particles thinned out and settled, so the outline stays a line instead of
+turning into a cloud while you walk. 0.4.2's border, timing and welcome all stay.**
 
 ## MaterialClaim_Block
 
-- **Right click the air with the shovel inside your own land shows the claim border** for
-  30 seconds, with the name of the claim and the remaining time in chat. Clicking the air
-  also cancels a half-made selection, so nobody gets stuck mid-claim.
-- **Selection outlines now draw the border only**, never a fill, so a 200x150 claim no longer
-  spams particles over all 30,000 blocks. Cost depends on the perimeter, not the area.
-- **Brighter particles.** `END_ROD` by default (bright white, no gravity, visible from far
-  away) instead of the old pale villager particles, drawn at ground level and at eye height
-  so the line is readable across uneven terrain.
-- **Border time raised to 30 seconds**, and asking again restarts the timer instead of
-  stacking a second overlapping outline. `Min` 8 seconds is gone.
-- **Shovel hints.** The first time you hold a golden shovel you get one short line telling
-  you what it does: inside your land it points at the border, outside it explains the two
-  corners. There is always a hint when a click could not do anything.
+- **About 91% fewer particles per redraw.** The outline is now a single layer of points
+  every 3 blocks along the edge, the spacing the old border used, instead of two particles
+  per block stacked at ground and eye height. A 48x48 selection went from 776 points per
+  redraw to 65.
+- **The live outline settles instead of endlessly redrawing.** Every redraw used to leave a
+  fresh generation of particles behind, so moving while selecting piled generations on top
+  of each other until the line looked like fog. The outline now redraws the moment the
+  cursor moves to a new block, then only refreshes on a slow heartbeat so the line stays
+  visible without accumulating.
+- **Hard cap on particles per redraw** (`borders.max-points`, default 240) so a very large
+  claim cannot flood the screen.
+- `borders.spacing` replaces `borders.density`: 3 means a particle every 3 blocks. The old
+  `density` key is still read if you had set it, so existing configs keep working.
 
-All of it is configurable:
-
-```yaml
-borders:
-  show-seconds: 30
-  particle: END_ROD
-  density: 2
-```
-
-## First join welcome
-
-A player who has **never played on the server before** is greeted once and told the server
-has a land claim plugin, how the shovel works, and that `/claim` opens the menu. Returning
-players are never greeted, even if they own no land. Every line is a normal `messages:`
-entry, so you can reword it, or set `welcome-first-join: false` to turn it off.
+The 30 second Show borders timer, the bright END_ROD particles, right-click-for-border and
+the first-join welcome are unchanged.
 
 ## MaterialClaim_Chunk
 

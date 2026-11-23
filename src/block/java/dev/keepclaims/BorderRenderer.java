@@ -53,8 +53,29 @@ public final class BorderRenderer {
         return Particle.END_ROD;
     }
 
-    private int density() {
-        return Math.max(1, Math.min(8, plugin.getConfig().getInt("borders.density", 2)));
+    /**
+     * Blocks between particles along an edge. 3 keeps the line readable while emitting far
+     * fewer points than one per block; the old chunk-based outline used roughly this
+     * spacing and looked right.
+     */
+    private int spacing() {
+        int spacing = plugin.getConfig().getInt("borders.spacing", 3);
+        if (!plugin.getConfig().isSet("borders.spacing")
+                && plugin.getConfig().isSet("borders.density")) {
+            // Backwards compatibility with the 0.4.2 'density' key (particles per block).
+            int density = Math.max(1, plugin.getConfig().getInt("borders.density", 1));
+            spacing = Math.max(1, (int) Math.round(1.0 / density));
+        }
+        return Math.max(1, Math.min(16, spacing));
+    }
+
+    /**
+     * Upper bound on particles per redraw. A huge claim would otherwise emit thousands of
+     * points every half second, which is what made the outline look like a cloud while the
+     * player was moving.
+     */
+    private int maxPoints() {
+        return Math.max(24, plugin.getConfig().getInt("borders.max-points", 240));
     }
 
     public int showSeconds() {
@@ -99,9 +120,21 @@ public final class BorderRenderer {
     }
 
     /** Starts (or restarts) the live outline that follows the cursor while selecting. */
+    /**
+     * Live outline that follows the cursor while the player picks the second corner.
+     *
+     * Redrawing stops once the rectangle has not changed for a moment. While the player
+     * moves, each redraw leaves a fresh generation of particles behind, and redrawing a
+     * static rectangle over and over just stacks those generations on top of each other
+     * until the line looks like a cloud. Settling when the shape stops changing keeps the
+     * outline crisp, and it wakes up again the moment the cursor moves to a new block.
+     */
     public void startPreview(Player p, Area corner) {
         stopPreview(p);
         BukkitRunnable task = new BukkitRunnable() {
+            private Area last = null;
+            private int idle = 0;
+
             @Override
             public void run() {
                 if (!p.isOnline()) {
@@ -110,7 +143,21 @@ public final class BorderRenderer {
                     return;
                 }
                 Area target = followCursor(p, corner);
-                if (target != null) {
+                if (target == null) {
+                    return;
+                }
+                if (!target.equals(last)) {
+                    // The selection changed: draw it once and reset the idle counter.
+                    last = target;
+                    idle = 0;
+                    drawEdges(p, target);
+                    return;
+                }
+                idle++;
+                // Refresh only occasionally while idle, so the line stays visible without
+                // piling up. The particle lifetime is about a second, so half a second is
+                // enough to look continuous.
+                if (idle % 2 == 0) {
                     drawEdges(p, target);
                 }
             }
@@ -171,8 +218,12 @@ public final class BorderRenderer {
     }
 
     /**
-     * Draws the four edges of one rectangle. Only the perimeter gets particles, so cost is
-     * proportional to the border length rather than the area.
+     * Draws the four edges of one rectangle.
+     *
+     * Only the perimeter gets particles, placed every `borders.spacing` blocks (default 3)
+     * at a single height above the ground. Drawing one layer instead of two and spacing the
+     * points out is what keeps the line clean while the player moves and the outline is
+     * redrawn: fewer new particles per redraw means far fewer overlapping generations.
      */
     public void drawEdges(Player p, Area a) {
         World w = p.getWorld();
@@ -180,43 +231,35 @@ public final class BorderRenderer {
             return;
         }
         Particle particle = particle();
-        int density = density();
-        // Ground level relative to the player: slightly above the player's feet so the line
-        // is visible in front of them, and also at eye height for tall terrain.
+        int spacing = spacing();
+        int cap = maxPoints();
         double y = p.getLocation().getY() + 0.4;
-        double eyeY = p.getLocation().getY() + 1.6;
+        int emitted = 0;
 
         // X edges (constant Z).
         for (int z : new int[]{a.minZ(), a.maxZ()}) {
-            int span = a.width();
-            int steps = Math.max(1, span * density);
-            for (int i = 0; i <= steps; i++) {
-                double x = a.minX() + (span - 1) * (double) i / steps;
-                if (!w.isChunkLoaded((int) x >> 4, z >> 4)) {
+            for (int x = a.minX(); x <= a.maxX() && emitted < cap; x += spacing) {
+                if (!w.isChunkLoaded(x >> 4, z >> 4)) {
                     continue;
                 }
-                double groundY = groundY(w, (int) x, z, y);
-                emit(p, particle, x + 0.5, groundY, z + 0.5);
-                if (eyeY > groundY + 1.2) {
-                    emit(p, particle, x + 0.5, eyeY, z + 0.5);
-                }
+                emit(p, particle, x + 0.5, groundY(w, x, z, y), z + 0.5);
+                emitted++;
             }
         }
         // Z edges (constant X).
         for (int x : new int[]{a.minX(), a.maxX()}) {
-            int span = a.depth();
-            int steps = Math.max(1, span * density);
-            for (int i = 0; i <= steps; i++) {
-                double z = a.minZ() + (span - 1) * (double) i / steps;
-                if (!w.isChunkLoaded(x >> 4, (int) z >> 4)) {
+            for (int z = a.minZ(); z <= a.maxZ() && emitted < cap; z += spacing) {
+                if (!w.isChunkLoaded(x >> 4, z >> 4)) {
                     continue;
                 }
-                double groundY = groundY(w, x, (int) z, y);
-                emit(p, particle, x + 0.5, groundY, z + 0.5);
-                if (eyeY > groundY + 1.2) {
-                    emit(p, particle, x + 0.5, eyeY, z + 0.5);
-                }
+                emit(p, particle, x + 0.5, groundY(w, x, z, y), z + 0.5);
+                emitted++;
             }
+        }
+        // The far corner is easy to miss when the loop steps over it; always mark it.
+        if (emitted < cap) {
+            emit(p, particle, a.maxX() + 0.5,
+                    groundY(w, a.maxX(), a.maxZ(), y), a.maxZ() + 0.5);
         }
     }
 

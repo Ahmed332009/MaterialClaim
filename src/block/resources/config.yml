@@ -59,8 +59,12 @@ borders:
   # Particle used for borders. END_ROD is bright white and visible from far away.
   # Other good choices: FLAME, SOUL_FIRE_FLAME, ELECTRIC_SPARK, ENCHANTED_HIT.
   particle: END_ROD
-  # Particles per block along a border edge. 1 = one per block, 2 = denser.
-  density: 2
+  # Blocks between particles along an edge. 3 is the classic look: a clear line without
+  # so many points that moving while selecting leaves a cloud of old particles behind.
+  # 1 = dense, 6 = sparse.
+  spacing: 3
+  # Hard limit on particles per redraw, so very large claims stay smooth.
+  max-points: 240
 
 # Tool items. Left click sets the first corner, right click sets the second and opens the
 # price menu. The stick inspects land.
